@@ -1,0 +1,41 @@
+pragma language_version >= 0.14.0;
+
+import CompactStandardLibrary;
+
+export struct OracleValue {
+    value: Uint<128>,
+    timestamp: Uint<128>,
+}
+
+export ledger oracleUpdater: ZswapCoinPublicKey;
+export ledger values: Map<Opaque<"string">, OracleValue>;
+
+constructor() {
+    oracleUpdater = ownPublicKey();
+}
+
+export circuit getValue(key: Opaque<"string">): OracleValue {
+    return values.lookup(disclose(key));
+}
+
+export circuit setValue(key: Opaque<"string">, value: OracleValue): [] {
+    assertOracleUpdater();
+    values.insert(disclose(key), disclose(value));
+}
+
+export circuit setMultipleValues(batch: Vector<10, [Opaque<"string">, OracleValue]>): [] {
+    assertOracleUpdater();
+
+    for (const entry of batch) {
+        values.insert(disclose(entry[0]), disclose(entry[1]));
+    }
+}
+
+export circuit changeOracleUpdater(newOracleUpdater: ZswapCoinPublicKey): [] {
+    assertOracleUpdater();
+    oracleUpdater = disclose(newOracleUpdater);
+}
+
+circuit assertOracleUpdater(): [] {
+    assert(ownPublicKey() == oracleUpdater, "Caller is not the oracle updater");
+}
