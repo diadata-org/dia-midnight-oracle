@@ -3,39 +3,43 @@ pragma language_version >= 0.14.0;
 import CompactStandardLibrary;
 
 export struct OracleValue {
-    value: Uint<128>,
-    timestamp: Uint<128>,
+  value: Uint<128>,
+  timestamp: Uint<128>,
 }
 
-export ledger oracleUpdater: ZswapCoinPublicKey;
+export ledger oracle_updater: ZswapCoinPublicKey;
 export ledger values: Map<Opaque<"string">, OracleValue>;
 
 constructor() {
-    oracleUpdater = ownPublicKey();
+  oracle_updater = ownPublicKey();
 }
 
-export circuit getValue(key: Opaque<"string">): OracleValue {
-    return values.lookup(disclose(key));
+export circuit get_value(key: Opaque<"string">): OracleValue {
+  if (!values.member(disclose(key))) {
+    return default<OracleValue>;
+  }
+  return values.lookup(disclose(key));
 }
 
-export circuit setValue(key: Opaque<"string">, value: OracleValue): [] {
-    assertOracleUpdater();
-    values.insert(disclose(key), disclose(value));
+// 0200ce9c40ab6227a22c34adba2d7f83bcb2083f44acac29e15c42354f4259750d75
+export circuit set_value(key: Opaque<"string">, value: OracleValue): [] {
+  assert_oracle_updater();
+  values.insert(disclose(key), disclose(value));
 }
 
-export circuit setMultipleValues(batch: Vector<10, [Opaque<"string">, OracleValue]>): [] {
-    assertOracleUpdater();
+export circuit set_multiple_values(batch: Vector<10, [Opaque<"string">, OracleValue]>): [] {
+  assert_oracle_updater();
 
-    for (const entry of batch) {
-        values.insert(disclose(entry[0]), disclose(entry[1]));
-    }
+  for (const entry of batch) {
+    values.insert(disclose(entry[0]), disclose(entry[1]));
+  }
 }
 
-export circuit changeOracleUpdater(newOracleUpdater: ZswapCoinPublicKey): [] {
-    assertOracleUpdater();
-    oracleUpdater = disclose(newOracleUpdater);
+export circuit change_oracle_updater(new_oracle_updater: ZswapCoinPublicKey): [] {
+  assert_oracle_updater();
+  oracle_updater = disclose(new_oracle_updater);
 }
 
-circuit assertOracleUpdater(): [] {
-    assert(ownPublicKey() == oracleUpdater, "Caller is not the oracle updater");
+circuit assert_oracle_updater(): [] {
+  assert(ownPublicKey() == oracle_updater, "Caller is not the oracle updater");
 }

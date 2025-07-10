@@ -49,11 +49,11 @@ export class OracleSimulator {
   }
 
   getValue(key: string) {
-    return this.contract.circuits.getValue(this.#circuitContext, key).result;
+    return this.contract.circuits.get_value(this.#circuitContext, key).result;
   }
 
   setValue(key: string, value: OracleValue) {
-    this.#circuitContext = this.contract.impureCircuits.setValue(
+    this.#circuitContext = this.contract.impureCircuits.set_value(
       this.#circuitContext,
       key,
       value
@@ -62,7 +62,7 @@ export class OracleSimulator {
   }
 
   setMultipleValues(batch: [string, OracleValue][]) {
-    this.#circuitContext = this.contract.impureCircuits.setMultipleValues(
+    this.#circuitContext = this.contract.impureCircuits.set_multiple_values(
       this.#circuitContext,
       batch
     ).context;
@@ -74,7 +74,7 @@ export class OracleSimulator {
       bytes: encodeCoinPublicKey(newOracleUpdater)
     };
 
-    this.#circuitContext = this.contract.impureCircuits.changeOracleUpdater(
+    this.#circuitContext = this.contract.impureCircuits.change_oracle_updater(
       this.#circuitContext,
       coinPublicKey
     ).context;

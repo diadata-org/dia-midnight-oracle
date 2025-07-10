@@ -19,7 +19,7 @@ import pinoPretty from 'pino-pretty';
 import pino from 'pino';
 import { createWriteStream } from 'node:fs';
 
-export const createLogger = async (logPath: string): Promise<pino.Logger> => {
+export async function createLogger(logPath: string): Promise<pino.Logger> {
   await fs.mkdir(path.dirname(logPath), { recursive: true });
   const pretty: pinoPretty.PrettyStream = pinoPretty({
     colorize: true,
@@ -39,4 +39,4 @@ export const createLogger = async (logPath: string): Promise<pino.Logger> => {
       { stream: createWriteStream(logPath), level },
     ]),
   );
-};
+}

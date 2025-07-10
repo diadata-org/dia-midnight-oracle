@@ -11,3 +11,5 @@ export type OracleProviders = MidnightProviders<OracleCircuits, typeof OraclePri
 export type OracleContract = Oracle.Contract<OraclePrivateState>;
 
 export type DeployedOracleContract = DeployedContract<OracleContract> | FoundContract<OracleContract>;
+
+export type OracleValue = Oracle.OracleValue;

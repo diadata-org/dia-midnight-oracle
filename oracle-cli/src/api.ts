@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-import { type ContractAddress } from '@midnight-ntwrk/compact-runtime';
+import { encodeCoinPublicKey, type CoinPublicKey, type ContractAddress } from '@midnight-ntwrk/compact-runtime';
 import { Oracle, type OraclePrivateState, witnesses } from '@dia/midnight-oracle-contract';
 import { type CoinInfo, nativeToken, Transaction, type TransactionId } from '@midnight-ntwrk/ledger';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
@@ -27,7 +27,8 @@ import {
   type OracleContract,
   type OracleProviders,
   type DeployedOracleContract,
-  OracleCircuits,
+  type OracleCircuits,
+  type OracleValue,
 } from './common-types';
 import { type Config, contractConfig } from './config';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
@@ -42,25 +43,34 @@ let logger: Logger;
 // @ts-expect-error: It's needed to enable WebSocket usage through apollo
 globalThis.WebSocket = WebSocket;
 
-// export const getOracleLedgerState = async (
-//   providers: OracleProviders,
-//   contractAddress: ContractAddress,
-// ): Promise<bigint | null> => {
-//   assertIsContractAddress(contractAddress);
-//   logger.info('Checking contract ledger state...');
-//   const state = await providers.publicDataProvider
-//     .queryContractState(contractAddress)
-//     .then((contractState) => (contractState != null ? Oracle.ledger(contractState.data).values : null));
-//   logger.info(`Ledger state: ${state}`);
-//   return state;
-// };
+declare global {
+  interface BigInt {
+    toJSON(): string;
+  }
+}
+
+BigInt.prototype.toJSON = function (): string {
+  return this.toString();
+};
+
+export async function getOracleLedgerState(
+  providers: OracleProviders,
+  contractAddress: ContractAddress,
+): Promise<Oracle.Ledger | null> {
+  assertIsContractAddress(contractAddress);
+  logger.info('Checking contract ledger state...');
+  const state = await providers.publicDataProvider
+    .queryContractState(contractAddress)
+    .then((contractState) => (contractState != null ? Oracle.ledger(contractState.data) : null));
+  return state;
+}
 
 export const oracleContractInstance: OracleContract = new Oracle.Contract(witnesses);
 
-export const joinContract = async (
+export async function joinContract(
   providers: OracleProviders,
   contractAddress: string,
-): Promise<DeployedOracleContract> => {
+): Promise<DeployedOracleContract> {
   const oracleContract = await findDeployedContract(providers, {
     contractAddress,
     contract: oracleContractInstance,
@@ -69,12 +79,12 @@ export const joinContract = async (
   });
   logger.info(`Joined contract at address: ${oracleContract.deployTxData.public.contractAddress}`);
   return oracleContract;
-};
+}
 
-export const deploy = async (
+export async function deploy(
   providers: OracleProviders,
   privateState: OraclePrivateState,
-): Promise<DeployedOracleContract> => {
+): Promise<DeployedOracleContract> {
   logger.info('Deploying oracle contract...');
   const oracleContract = await deployContract(providers, {
     contract: oracleContractInstance,
@@ -83,30 +93,62 @@ export const deploy = async (
   });
   logger.info(`Deployed contract at address: ${oracleContract.deployTxData.public.contractAddress}`);
   return oracleContract;
-};
+}
 
-// export const increment = async (counterContract: DeployedOracleContract): Promise<FinalizedTxData> => {
-//   logger.info('Incrementing...');
-//   const finalizedTxData = await counterContract.callTx.increment();
-//   logger.info(`Transaction ${finalizedTxData.public.txId} added in block ${finalizedTxData.public.blockHeight}`);
-//   return finalizedTxData.public;
-// };
+export async function setValue(
+  oracleContract: DeployedOracleContract,
+  key: string,
+  value: OracleValue,
+): Promise<FinalizedTxData> {
+  logger.info('Performing oracle value update...');
+  const finalizedTxData = await oracleContract.callTx.set_value(key, value);
+  logger.info(`Transaction ${finalizedTxData.public.txId} added in block ${finalizedTxData.public.blockHeight}`);
+  return finalizedTxData.public;
+}
 
-// export const displayCounterValue = async (
-//   providers: OracleProviders,
-//   counterContract: DeployedOracleContract,
-// ): Promise<{ counterValue: bigint | null; contractAddress: string }> => {
-//   const contractAddress = counterContract.deployTxData.public.contractAddress;
-//   const counterValue = await getOracleLedgerState(providers, contractAddress);
-//   if (counterValue === null) {
-//     logger.info(`There is no counter contract deployed at ${contractAddress}.`);
-//   } else {
-//     logger.info(`Current counter value: ${Number(counterValue)}`);
-//   }
-//   return { contractAddress, counterValue };
-// };
+export async function setMultipleValues(
+  oracleContract: DeployedOracleContract,
+  batch: [string, OracleValue][],
+): Promise<FinalizedTxData> {
+  logger.info('Performing batch oracle update...');
+  const finalizedTxData = await oracleContract.callTx.set_multiple_values(batch);
+  logger.info(`Transaction ${finalizedTxData.public.txId} added in block ${finalizedTxData.public.blockHeight}`);
+  return finalizedTxData.public;
+}
 
-export const createWalletAndMidnightProvider = async (wallet: Wallet): Promise<WalletProvider & MidnightProvider> => {
+export async function changeOracleUpdater(
+  oracleContract: DeployedOracleContract,
+  newOracleUpdater: CoinPublicKey,
+): Promise<FinalizedTxData> {
+  const coinPublicKey = {
+    bytes: encodeCoinPublicKey(newOracleUpdater),
+  };
+
+  logger.info('Changing oracle updater public key...');
+  const finalizedTxData = await oracleContract.callTx.change_oracle_updater(coinPublicKey);
+  logger.info(`Transaction ${finalizedTxData.public.txId} added in block ${finalizedTxData.public.blockHeight}`);
+  return finalizedTxData.public;
+}
+
+export async function displayOracleValue(
+  providers: OracleProviders,
+  oracleContract: DeployedOracleContract,
+  key: string,
+) {
+  const contractAddress = oracleContract.deployTxData.public.contractAddress;
+  const state = await getOracleLedgerState(providers, contractAddress);
+  if (!state) {
+    logger.info(`There is no oracle contract deployed at ${contractAddress}.`);
+  } else if (state.values.member(key)) {
+    const value = state.values.lookup(key);
+    logger.info(`Result: ${JSON.stringify(value)}`);
+  } else {
+    logger.info(`Value not found: ${key}`);
+  }
+  return { contractAddress, state };
+}
+
+export async function createWalletAndMidnightProvider(wallet: Wallet): Promise<WalletProvider & MidnightProvider> {
   const state = await Rx.firstValueFrom(wallet.state());
   return {
     coinPublicKey: state.coinPublicKey,
@@ -125,10 +167,10 @@ export const createWalletAndMidnightProvider = async (wallet: Wallet): Promise<W
       return wallet.submitTransaction(tx);
     },
   };
-};
+}
 
-export const waitForSync = (wallet: Wallet) =>
-  Rx.firstValueFrom(
+export function waitForSync(wallet: Wallet) {
+  return Rx.firstValueFrom(
     wallet.state().pipe(
       Rx.throttleTime(5_000),
       Rx.tap((state) => {
@@ -144,9 +186,10 @@ export const waitForSync = (wallet: Wallet) =>
       }),
     ),
   );
+}
 
-export const waitForSyncProgress = async (wallet: Wallet) =>
-  await Rx.firstValueFrom(
+export function waitForSyncProgress(wallet: Wallet) {
+  return Rx.firstValueFrom(
     wallet.state().pipe(
       Rx.throttleTime(5_000),
       Rx.tap((state) => {
@@ -162,9 +205,10 @@ export const waitForSyncProgress = async (wallet: Wallet) =>
       }),
     ),
   );
+}
 
-export const waitForFunds = (wallet: Wallet) =>
-  Rx.firstValueFrom(
+export function waitForFunds(wallet: Wallet) {
+  return Rx.firstValueFrom(
     wallet.state().pipe(
       Rx.throttleTime(10_000),
       Rx.tap((state) => {
@@ -182,12 +226,13 @@ export const waitForFunds = (wallet: Wallet) =>
       Rx.filter((balance) => balance > 0n),
     ),
   );
+}
 
-export const buildWalletAndWaitForFunds = async (
+export async function buildWalletAndWaitForFunds(
   { indexer, indexerWS, node, proofServer }: Config,
   seed: string,
   filename: string,
-): Promise<Wallet & Resource> => {
+): Promise<Wallet & Resource> {
   const directoryPath = process.env.SYNC_CACHE;
   let wallet: Wallet & Resource;
   if (directoryPath !== undefined) {
@@ -284,7 +329,6 @@ export const buildWalletAndWaitForFunds = async (
   }
 
   const state = await Rx.firstValueFrom(wallet.state());
-  logger.info(`Your wallet seed is: ${seed}`);
   logger.info(`Your wallet address is: ${state.address}`);
   let balance = state.balances[nativeToken()];
   if (balance === undefined || balance === 0n) {
@@ -294,18 +338,19 @@ export const buildWalletAndWaitForFunds = async (
   }
   logger.info(`Your wallet balance is: ${balance}`);
   return wallet;
-};
+}
 
-export const randomBytes = (length: number): Uint8Array => {
+export function randomBytes(length: number): Uint8Array {
   const bytes = new Uint8Array(length);
   webcrypto.getRandomValues(bytes);
   return bytes;
-};
+}
 
-export const buildFreshWallet = async (config: Config): Promise<Wallet & Resource> =>
-  await buildWalletAndWaitForFunds(config, toHex(randomBytes(32)), '');
+export function buildFreshWallet(config: Config): Promise<Wallet & Resource> {
+  return buildWalletAndWaitForFunds(config, toHex(randomBytes(32)), '');
+}
 
-export const configureProviders = async (wallet: Wallet & Resource, config: Config) => {
+export async function configureProviders(wallet: Wallet & Resource, config: Config) {
   const walletAndMidnightProvider = await createWalletAndMidnightProvider(wallet);
   return {
     privateStateProvider: levelPrivateStateProvider<typeof OraclePrivateStateId>({
@@ -317,15 +362,15 @@ export const configureProviders = async (wallet: Wallet & Resource, config: Conf
     walletProvider: walletAndMidnightProvider,
     midnightProvider: walletAndMidnightProvider,
   };
-};
+}
 
 export function setLogger(_logger: Logger) {
   logger = _logger;
 }
 
-export const streamToString = async (stream: fs.ReadStream): Promise<string> => {
+export function streamToString(stream: fs.ReadStream): Promise<string> {
   const chunks: Buffer[] = [];
-  return await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     stream.on('data', (chunk) => chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk));
     stream.on('error', (err) => {
       reject(err);
@@ -334,9 +379,9 @@ export const streamToString = async (stream: fs.ReadStream): Promise<string> => 
       resolve(Buffer.concat(chunks).toString('utf8'));
     });
   });
-};
+}
 
-export const isAnotherChain = async (wallet: Wallet, offset: number) => {
+export async function isAnotherChain(wallet: Wallet, offset: number) {
   await waitForSyncProgress(wallet);
   // Here wallet does not expose the offset block it is synced to, that is why this workaround
   const walletOffset = Number(JSON.parse(await wallet.serializeState()).offset);
@@ -347,9 +392,9 @@ export const isAnotherChain = async (wallet: Wallet, offset: number) => {
     logger.info(`Your offset offset is: ${walletOffset} restored offset: ${offset} ok`);
     return false;
   }
-};
+}
 
-export const saveState = async (wallet: Wallet, filename: string) => {
+export async function saveState(wallet: Wallet, filename: string) {
   const directoryPath = process.env.SYNC_CACHE;
   if (directoryPath !== undefined) {
     logger.info(`Saving state in ${directoryPath}/${filename}`);
@@ -377,4 +422,4 @@ export const saveState = async (wallet: Wallet, filename: string) => {
   } else {
     logger.info('Not saving cache as sync cache was not defined');
   }
-};
+}
