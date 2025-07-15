@@ -8,7 +8,7 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { type Logger } from 'pino';
 import { type StartedDockerComposeEnvironment, type DockerComposeEnvironment } from 'testcontainers';
 import { type OracleProviders, type DeployedOracleContract } from './common-types';
-import { type Config, StandaloneConfig } from './config';
+import { type Config, StandaloneConfig, StandaloneE2EConfig } from './config';
 import * as api from './api';
 
 dotenv.config();
@@ -110,11 +110,11 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
   if (dockerEnv !== undefined) {
     env = await dockerEnv.up();
 
-    if (config instanceof StandaloneConfig) {
-      config.indexer = mapContainerPort(env, config.indexer, 'dia-midnight-oracle-indexer');
-      config.indexerWS = mapContainerPort(env, config.indexerWS, 'dia-midnight-oracle-indexer');
-      config.node = mapContainerPort(env, config.node, 'dia-midnight-oracle-node');
-      config.proofServer = mapContainerPort(env, config.proofServer, 'dia-midnight-oracle-proof-server');
+    if (config instanceof StandaloneConfig || config instanceof StandaloneE2EConfig) {
+      config.indexer = mapContainerPort(env, config.indexer, 'midnight-dia-oracle-indexer');
+      config.indexerWS = mapContainerPort(env, config.indexerWS, 'midnight-dia-oracle-indexer');
+      config.node = mapContainerPort(env, config.node, 'midnight-dia-oracle-node');
+      config.proofServer = mapContainerPort(env, config.proofServer, 'midnight-dia-oracle-proof-server');
     }
   }
 
