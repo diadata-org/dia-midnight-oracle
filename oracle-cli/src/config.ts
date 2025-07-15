@@ -40,7 +40,7 @@ export class StandaloneConfig implements Config {
 export class StandaloneE2EConfig implements Config {
   logDir = path.resolve(currentDir, '..', 'logs', 'standalone-e2e', `${new Date().toISOString()}.log`);
   indexer = 'http://indexer:8088/api/v1/graphql';
-  indexerWS = 'ws://indexer:8080/api/v1/graphql/ws';
+  indexerWS = 'ws://indexer:8088/api/v1/graphql/ws';
   node = 'http://node:9944';
   proofServer = 'http://proof-server:6300';
   constructor() {
