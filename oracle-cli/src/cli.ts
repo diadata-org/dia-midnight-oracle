@@ -1,7 +1,5 @@
 import { type Resource } from '@midnight-ntwrk/wallet';
 import { type Wallet } from '@midnight-ntwrk/wallet-api';
-import * as bip39 from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english';
 import dotenv from 'dotenv';
 import { stdin as input, stdout as output } from 'node:process';
 import { createInterface, type Interface } from 'node:readline/promises';
@@ -10,6 +8,8 @@ import { type StartedDockerComposeEnvironment, type DockerComposeEnvironment } f
 import { type OracleProviders, type DeployedOracleContract } from './common-types';
 import { type Config, StandaloneConfig, StandaloneE2EConfig } from './config';
 import * as api from './api';
+import { HDWallet, Roles } from '@midnight-ntwrk/wallet-sdk-hd';
+import * as bip39 from 'bip39';
 
 dotenv.config();
 
@@ -119,8 +119,22 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
   }
 
   const mnemonic = process.env.MIDNIGHT_SEED || '';
-  const entropy = bip39.mnemonicToEntropy(mnemonic, wordlist);
-  const seed = Buffer.from(entropy).toString('hex');
+
+  const mnemonicSeed = bip39.mnemonicToSeedSync(mnemonic);
+  const generatedWallet = HDWallet.fromSeed(mnemonicSeed);
+
+  let seed = '';
+
+  if (generatedWallet.type == 'seedOk') {
+    const zswapKey = generatedWallet.hdWallet.selectAccount(0).selectRole(Roles.Zswap).deriveKeyAt(0);
+    if (zswapKey.type === 'keyDerived') {
+      seed = Buffer.from(zswapKey.key).toString('hex');
+    } else {
+      logger.error('Error deriving key');
+    }
+  } else {
+    logger.error('Error generating HDWallet');
+  }
 
   const wallet = await buildWallet(config, seed);
 

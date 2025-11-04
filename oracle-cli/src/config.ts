@@ -20,7 +20,7 @@ export class TestnetLocalConfig implements Config {
   indexer = 'http://127.0.0.1:8088/api/v1/graphql';
   indexerWS = 'ws://127.0.0.1:8088/api/v1/graphql/ws';
   node = 'http://127.0.0.1:9944';
-  proofServer = 'http://127.0.0.1:6300';
+  proofServer = 'https://lace-dev.proof-pub.stg.midnight.tools';
   constructor() {
     setNetworkId(NetworkId.TestNet);
   }
@@ -31,7 +31,7 @@ export class StandaloneConfig implements Config {
   indexer = 'http://127.0.0.1:8088/api/v1/graphql';
   indexerWS = 'ws://127.0.0.1:8088/api/v1/graphql/ws';
   node = 'http://127.0.0.1:9944';
-  proofServer = 'http://127.0.0.1:6300';
+  proofServer = 'https://lace-dev.proof-pub.stg.midnight.tools';
   constructor() {
     setNetworkId(NetworkId.Undeployed);
   }
@@ -53,7 +53,7 @@ export class TestnetRemoteConfig implements Config {
   indexer = 'https://indexer.testnet-02.midnight.network/api/v1/graphql';
   indexerWS = 'wss://indexer.testnet-02.midnight.network/api/v1/graphql/ws';
   node = 'https://rpc.testnet-02.midnight.network';
-  proofServer = 'http://127.0.0.1:6300';
+  proofServer = 'https://lace-dev.proof-pub.stg.midnight.tools';
   constructor() {
     setNetworkId(NetworkId.TestNet);
   }
