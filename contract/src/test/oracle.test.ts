@@ -22,7 +22,7 @@ describe("DIA Oracle smart contract", () => {
       const state = simulator.getLedger();
       expect(state.values.isEmpty()).toBe(true);
 
-      const decodedPk = decodeCoinPublicKey(state.oracleUpdater.bytes);
+      const decodedPk = decodeCoinPublicKey(state.oracle_updater.bytes);
       expect(decodedPk).toEqual(oracleUpdater);
 
       const privateState = simulator.getPrivateState();
@@ -90,7 +90,7 @@ describe("DIA Oracle smart contract", () => {
       const newUpdater = generateCoinPublicKey();
       const state = simulator.changeOracleUpdater(newUpdater);
 
-      const decodedPk = decodeCoinPublicKey(state.oracleUpdater.bytes);
+      const decodedPk = decodeCoinPublicKey(state.oracle_updater.bytes);
       expect(decodedPk).toBe(newUpdater);
     });
 
