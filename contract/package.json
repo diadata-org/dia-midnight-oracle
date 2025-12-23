@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "compact": "/Users/luizsoares/.local/bin/compact compile src/oracle.compact src/managed/oracle",
+    "compact": "compact compile src/oracle.compact src/managed/oracle",
     "test": "vitest run",
     "test:compile": "npm run compact && vitest run",
     "build": "rm -rf dist && tsc --project tsconfig.build.json && cp -Rf ./src/managed ./dist/managed && cp ./src/oracle.compact ./dist",
