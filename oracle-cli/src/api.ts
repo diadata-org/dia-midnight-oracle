@@ -17,6 +17,7 @@ import {
 } from '@midnight-ntwrk/midnight-js-types';
 import { type Resource, WalletBuilder } from '@midnight-ntwrk/wallet';
 import { type Wallet } from '@midnight-ntwrk/wallet-api';
+import { MidnightBech32m, ShieldedCoinPublicKey } from '@midnight-ntwrk/wallet-sdk-address-format';
 import { Transaction as ZswapTransaction } from '@midnight-ntwrk/zswap';
 import { webcrypto } from 'crypto';
 import { type Logger } from 'pino';
@@ -52,6 +53,25 @@ declare global {
 BigInt.prototype.toJSON = function (): string {
   return this.toString();
 };
+
+function normalizeCoinPublicKey(coinPublicKey: CoinPublicKey): CoinPublicKey {
+  const normalized = coinPublicKey.trim();
+  if (/^[0-9a-fA-F]{64}$/.test(normalized)) {
+    return normalized.toLowerCase() as CoinPublicKey;
+  }
+
+  try {
+    const parsed = MidnightBech32m.parse(normalized);
+    const decoded = ShieldedCoinPublicKey.codec.decode(parsed.network, parsed);
+    return decoded.data.toString('hex') as CoinPublicKey;
+  } catch (error) {
+    const detail = error instanceof Error ? ` ${error.message}` : '';
+    throw new Error(
+      `Invalid Midnight coin public key: expected a 32-byte hex key or mn_shield-cpk Bech32m key; got "${normalized}".` +
+        detail,
+    );
+  }
+}
 
 export async function getOracleLedgerState(
   providers: OracleProviders,
@@ -120,8 +140,9 @@ export async function changeOracleUpdater(
   oracleContract: DeployedOracleContract,
   newOracleUpdater: CoinPublicKey,
 ): Promise<FinalizedTxData> {
+  const normalizedOracleUpdater = normalizeCoinPublicKey(newOracleUpdater);
   const coinPublicKey = {
-    bytes: encodeCoinPublicKey(newOracleUpdater),
+    bytes: encodeCoinPublicKey(normalizedOracleUpdater),
   };
 
   logger.info('Changing oracle updater public key...');

@@ -12,6 +12,7 @@
     "standalone-e2e": "node --experimental-specifier-resolution=node --loader ts-node/esm src/standalone-e2e.ts",
     "build": "rm -rf dist && tsc --project tsconfig.build.json",
     "lint": "eslint src",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start-testnet-remote": "npm run build && npm run testnet-remote",
     "start-testnet-remote-ps": "npm run build && npm run testnet-remote-ps",
