@@ -13,15 +13,20 @@ This repository contains DIA oracle smart contracts for Midnight network. The fo
 
 ## Installing Compact compiler
 
-1. Download the latest version of the Compact compiler from [the compiler release page](https://docs.midnight.network/relnotes/compact) and follow the instructions to install it (in particular the instructions regarding permissions that must be set to compile the contracts).
-2. Create a directory for the compiler executables, and unzip the downloaded file into that directory.
-3. Add the directory to your shell's $PATH.
+1. Install the Compact command-line tool from [the compiler release page](https://docs.midnight.network/relnotes/compact) and follow the instructions regarding permissions that must be set to compile the contracts.
+2. Install the Compact toolchain version used by this project:
 
-   For example, if you unzipped the Compact compiler in `$HOME/bin/compactc`:
+   ```sh
+   compact update 0.26.0
+   ```
 
-```sh
-export PATH=$PATH:$HOME/bin/compactc
-```
+3. Make sure the `compact` executable is available in your shell's $PATH.
+
+   For example, if you installed it in `$HOME/.local/bin`:
+
+   ```sh
+   export PATH=$PATH:$HOME/.local/bin
+   ```
 
 ## Bulding the project
 

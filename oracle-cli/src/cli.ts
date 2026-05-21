@@ -67,12 +67,13 @@ async function mainLoop(providers: OracleProviders, rli: Interface): Promise<voi
     let key: string;
 
     switch (choice) {
-      case '1':
+      case '1': {
         key = await rli.question('\nKey: ');
         const value = BigInt(await rli.question('Value: '));
         const timestamp = BigInt(await rli.question('Timestamp: '));
         await api.setValue(oracleContract, key, { value, timestamp });
         break;
+      }
       case '2':
         key = await rli.question('\nKey: ');
         await api.displayOracleValue(providers, oracleContract, key);

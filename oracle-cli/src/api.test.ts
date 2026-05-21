@@ -1,5 +1,5 @@
-import { NetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { ShieldedCoinPublicKey } from '@midnight-ntwrk/wallet-sdk-address-format';
+import { NetworkId } from '@midnight-ntwrk/zswap';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const apiMocks = vi.hoisted(() => ({

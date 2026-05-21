@@ -45,6 +45,7 @@ let logger: Logger;
 globalThis.WebSocket = WebSocket;
 
 declare global {
+  // eslint-disable-next-line no-unused-vars
   interface BigInt {
     toJSON(): string;
   }
