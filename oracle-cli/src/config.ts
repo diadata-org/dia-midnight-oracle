@@ -42,7 +42,7 @@ export class StandaloneE2EConfig implements Config {
   indexer = 'http://indexer:8088/api/v1/graphql';
   indexerWS = 'ws://indexer:8088/api/v1/graphql/ws';
   node = 'http://node:9944';
-  proofServer = 'http://proof-server:6300';
+  proofServer = 'http://127.0.0.1:6300';
   constructor() {
     setNetworkId(NetworkId.Undeployed);
   }
@@ -50,11 +50,12 @@ export class StandaloneE2EConfig implements Config {
 
 export class TestnetRemoteConfig implements Config {
   logDir = path.resolve(currentDir, '..', 'logs', 'testnet-remote', `${new Date().toISOString()}.log`);
-  indexer = 'https://indexer.testnet-02.midnight.network/api/v1/graphql';
-  indexerWS = 'wss://indexer.testnet-02.midnight.network/api/v1/graphql/ws';
-  node = 'https://rpc.testnet-02.midnight.network';
-  proofServer = 'https://lace-dev.proof-pub.stg.midnight.tools';
+  proofServer = 'http://127.0.0.1:6300';
+  indexer     = 'https://indexer.preprod.midnight.network/api/v3/graphql';
+  indexerWS   = 'wss://indexer.preprod.midnight.network/api/v3/graphql/ws';
+  node        = 'https://rpc.preprod.midnight.network';
+	networkId   = 'preprod';
   constructor() {
-    setNetworkId(NetworkId.TestNet);
+    //setNetworkId('preprod');
   }
 }
