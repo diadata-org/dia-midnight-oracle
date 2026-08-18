@@ -1,13 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { encodeCoinPublicKey, type CoinPublicKey, type ContractAddress } from '@midnight-ntwrk/compact-runtime';
-import { Oracle, type OraclePrivateState, witnesses } from '@dia/midnight-oracle-contract';
+import { Oracle, type OraclePrivateState } from '@dia/midnight-oracle-contract';
 import {
   LedgerParameters,
   nativeToken,
   type FinalizedTransaction,
   type TransactionId,
 } from '@midnight-ntwrk/ledger-v8';
+import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
@@ -29,7 +30,6 @@ import * as Rx from 'rxjs';
 import { WebSocket } from 'ws';
 import {
   OraclePrivateStateId,
-  type OracleContract,
   type OracleProviders,
   type DeployedOracleContract,
   type OracleCircuits,
@@ -39,7 +39,7 @@ import {
 } from './common-types';
 import { type Config, contractConfig } from './config';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
-import { assertIsContractAddress, toHex, ttlOneHour } from '@midnight-ntwrk/midnight-js-utils';
+import { assertIsContractAddress, ttlOneHour } from '@midnight-ntwrk/midnight-js-utils';
 import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as fsAsync from 'node:fs/promises';
 import * as fs from 'node:fs';
@@ -72,7 +72,10 @@ export async function getOracleLedgerState(
   return state;
 }
 
-export const oracleContractInstance: OracleContract = new Oracle.Contract(witnesses);
+export const compiledOracleContract = CompiledContract.make('Oracle', Oracle.Contract).pipe(
+  CompiledContract.withVacantWitnesses,
+  CompiledContract.withCompiledFileAssets(contractConfig.zkConfigPath),
+);
 
 export async function joinContract(
   providers: OracleProviders,
@@ -80,7 +83,7 @@ export async function joinContract(
 ): Promise<DeployedOracleContract> {
   const oracleContract = await findDeployedContract(providers, {
     contractAddress,
-    contract: oracleContractInstance,
+    compiledContract: compiledOracleContract,
     privateStateId: OraclePrivateStateId,
     initialPrivateState: {},
   });
@@ -94,7 +97,7 @@ export async function deploy(
 ): Promise<DeployedOracleContract> {
   logger.info('Deploying oracle contract...');
   const oracleContract = await deployContract(providers, {
-    contract: oracleContractInstance,
+    compiledContract: compiledOracleContract,
     privateStateId: OraclePrivateStateId,
     initialPrivateState: privateState,
   });
