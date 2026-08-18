@@ -1,14 +1,14 @@
 services:
   proof-server:
     container_name: 'midnight-dia-oracle-proof-server'
-    image: "midnightnetwork/proof-server:4.0.0"
+    image: "midnightntwrk/proof-server:8.1.0"
     ports:
       - "6300"
     environment:
       RUST_BACKTRACE: "full"
   indexer:
     container_name: 'midnight-dia-oracle-indexer'
-    image: 'midnightntwrk/indexer-standalone:2.1.1'
+    image: 'midnightntwrk/indexer-standalone:4.3.3'
     ports:
       - '0:8088'
     environment:
@@ -19,7 +19,7 @@ services:
       node:
         condition: service_started
   node:
-    image: 'midnightnetwork/midnight-node:0.12.0'
+    image: 'midnightntwrk/midnight-node:1.0.1'
     container_name: 'midnight-dia-oracle-node'
     ports:
       - "9944"
