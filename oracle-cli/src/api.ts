@@ -2,22 +2,20 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { encodeCoinPublicKey, type CoinPublicKey, type ContractAddress } from '@midnight-ntwrk/compact-runtime';
 import { Oracle, type OraclePrivateState, witnesses } from '@dia/midnight-oracle-contract';
-import { type CoinInfo, nativeToken, Transaction, type TransactionId } from '@midnight-ntwrk/ledger';
+import { nativeToken, type FinalizedTransaction, type TransactionId } from '@midnight-ntwrk/ledger-v8';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import {
-  type BalancedTransaction,
-  createBalancedTx,
   type FinalizedTxData,
   type MidnightProvider,
-  type UnbalancedTransaction,
+  type UnboundTransaction,
   type WalletProvider,
 } from '@midnight-ntwrk/midnight-js-types';
+import { type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
 import { type Resource, WalletBuilder } from '@midnight-ntwrk/wallet';
 import { type Wallet } from '@midnight-ntwrk/wallet-api';
-import { Transaction as ZswapTransaction } from '@midnight-ntwrk/zswap';
 import { webcrypto } from 'crypto';
 import { type Logger } from 'pino';
 import * as Rx from 'rxjs';
@@ -29,11 +27,12 @@ import {
   type DeployedOracleContract,
   type OracleCircuits,
   type OracleValue,
+  type WalletSecretKeys,
 } from './common-types';
 import { type Config, contractConfig } from './config';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
-import { assertIsContractAddress, toHex } from '@midnight-ntwrk/midnight-js-utils';
-import { getLedgerNetworkId, getZswapNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { assertIsContractAddress, toHex, ttlOneHour } from '@midnight-ntwrk/midnight-js-utils';
+import { getZswapNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as fsAsync from 'node:fs/promises';
 import * as fs from 'node:fs';
 
@@ -148,22 +147,22 @@ export async function displayOracleValue(
   return { contractAddress, state };
 }
 
-export async function createWalletAndMidnightProvider(wallet: Wallet): Promise<WalletProvider & MidnightProvider> {
-  const state = await Rx.firstValueFrom(wallet.state());
+export function createWalletAndMidnightProvider(
+  wallet: WalletFacade,
+  keys: WalletSecretKeys,
+): WalletProvider & MidnightProvider {
   return {
-    coinPublicKey: state.coinPublicKey,
-    encryptionPublicKey: state.encryptionPublicKey,
-    balanceTx(tx: UnbalancedTransaction, newCoins: CoinInfo[]): Promise<BalancedTransaction> {
-      return wallet
-        .balanceTransaction(
-          ZswapTransaction.deserialize(tx.serialize(getLedgerNetworkId()), getZswapNetworkId()),
-          newCoins,
-        )
-        .then((tx) => wallet.proveTransaction(tx))
-        .then((zswapTx) => Transaction.deserialize(zswapTx.serialize(getZswapNetworkId()), getLedgerNetworkId()))
-        .then(createBalancedTx);
+    getCoinPublicKey() {
+      return keys.shieldedSecretKeys.coinPublicKey;
     },
-    submitTx(tx: BalancedTransaction): Promise<TransactionId> {
+    getEncryptionPublicKey() {
+      return keys.shieldedSecretKeys.encryptionPublicKey;
+    },
+    async balanceTx(tx: UnboundTransaction, ttl: Date = ttlOneHour()): Promise<FinalizedTransaction> {
+      const recipe = await wallet.balanceUnboundTransaction(tx, keys, { ttl });
+      return wallet.finalizeRecipe(recipe);
+    },
+    submitTx(tx: FinalizedTransaction): Promise<TransactionId> {
       return wallet.submitTransaction(tx);
     },
   };
@@ -350,8 +349,8 @@ export function buildFreshWallet(config: Config): Promise<Wallet & Resource> {
   return buildWalletAndWaitForFunds(config, toHex(randomBytes(32)), '');
 }
 
-export async function configureProviders(wallet: Wallet & Resource, config: Config) {
-  const walletAndMidnightProvider = await createWalletAndMidnightProvider(wallet);
+export async function configureProviders(wallet: WalletFacade, keys: WalletSecretKeys, config: Config) {
+  const walletAndMidnightProvider = createWalletAndMidnightProvider(wallet, keys);
   return {
     privateStateProvider: levelPrivateStateProvider<typeof OraclePrivateStateId>({
       privateStateStoreName: contractConfig.privateStateStoreName,
