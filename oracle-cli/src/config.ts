@@ -4,6 +4,8 @@ export const currentDir = path.resolve(new URL(import.meta.url).pathname, '..');
 
 export const contractConfig = {
   privateStateStoreName: 'oracle-private-state',
+  privateStoragePassword: 'oracle-private-state-password',
+  accountId: 'oracle-cli',
   zkConfigPath: path.resolve(currentDir, '..', '..', 'contract', 'src', 'managed', 'oracle'),
 };
 

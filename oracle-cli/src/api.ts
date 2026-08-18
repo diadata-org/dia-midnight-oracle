@@ -328,6 +328,8 @@ export async function configureProviders(wallet: WalletFacade, keys: WalletSecre
   return {
     privateStateProvider: levelPrivateStateProvider<typeof OraclePrivateStateId>({
       privateStateStoreName: contractConfig.privateStateStoreName,
+      privateStoragePasswordProvider: () => contractConfig.privateStoragePassword,
+      accountId: contractConfig.accountId,
     }),
     publicDataProvider: indexerPublicDataProvider(config.indexer, config.indexerWS),
     zkConfigProvider: new NodeZkConfigProvider<OracleCircuits>(contractConfig.zkConfigPath),
