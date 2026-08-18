@@ -1,14 +1,14 @@
 import { decodeCoinPublicKey } from "@midnight-ntwrk/compact-runtime";
-import { NetworkId, setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
+import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { describe, it, expect } from "vitest";
-import { OracleValue } from "../managed/oracle/contract/index.cjs";
+import { OracleValue } from "../managed/oracle/contract/index.js";
 import { generateCoinPublicKey, OracleSimulator } from "./oracle-simulator";
 
 const ORACLE_UPDATER_ERR = "failed assert: Caller is not the oracle updater";
 
 const now = () => BigInt(Math.floor(Date.now() / 1000));
 
-setNetworkId(NetworkId.Undeployed);
+setNetworkId("undeployed");
 
 describe("DIA Oracle smart contract", () => {
   const oracleUpdater = generateCoinPublicKey();

@@ -1,13 +1,13 @@
 import {
   type CircuitContext,
-  QueryContext,
   sampleContractAddress,
-  constructorContext,
+  createConstructorContext,
+  createCircuitContext,
   CoinPublicKey,
   encodeCoinPublicKey,
   decodeCoinPublicKey
 } from "@midnight-ntwrk/compact-runtime";
-import { Contract, ledger, type OracleValue } from "../managed/oracle/contract/index.cjs";
+import { Contract, ledger, type OracleValue } from "../managed/oracle/contract/index.js";
 import crypto from "node:crypto";
 import { witnesses, type OraclePrivateState } from "../witnesses";
 
@@ -24,18 +24,18 @@ export class OracleSimulator {
 
   constructor(coinPublicKey: CoinPublicKey) {
     const { currentPrivateState, currentContractState, currentZswapLocalState } =
-      this.contract.initialState(constructorContext({}, coinPublicKey));
+      this.contract.initialState(createConstructorContext({}, coinPublicKey));
 
-    this.#circuitContext = {
-      currentPrivateState,
+    this.#circuitContext = createCircuitContext<OraclePrivateState>(
+      sampleContractAddress(),
       currentZswapLocalState,
-      originalState: currentContractState,
-      transactionContext: new QueryContext(currentContractState.data, sampleContractAddress())
-    };
+      currentContractState,
+      currentPrivateState
+    );
   }
 
   getLedger() {
-    return ledger(this.#circuitContext.transactionContext.state);
+    return ledger(this.#circuitContext.currentQueryContext.state);
   }
 
   getPrivateState() {
