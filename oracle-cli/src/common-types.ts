@@ -2,6 +2,7 @@ import { Oracle, type OraclePrivateState } from '@dia/midnight-oracle-contract';
 import type { ImpureCircuitId, MidnightProviders } from '@midnight-ntwrk/midnight-js-types';
 import type { DeployedContract, FoundContract } from '@midnight-ntwrk/midnight-js-contracts';
 import type { DustSecretKey, ZswapSecretKeys } from '@midnight-ntwrk/ledger-v8';
+import type { UnshieldedKeystore } from '@midnight-ntwrk/wallet-sdk-unshielded-wallet';
 
 export type OracleCircuits = ImpureCircuitId<Oracle.Contract<OraclePrivateState>>;
 
@@ -18,4 +19,8 @@ export type OracleValue = Oracle.OracleValue;
 export type WalletSecretKeys = {
   readonly shieldedSecretKeys: ZswapSecretKeys;
   readonly dustSecretKey: DustSecretKey;
+};
+
+export type WalletKeys = WalletSecretKeys & {
+  readonly unshieldedKeystore: UnshieldedKeystore;
 };

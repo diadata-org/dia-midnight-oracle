@@ -2,7 +2,12 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { encodeCoinPublicKey, type CoinPublicKey, type ContractAddress } from '@midnight-ntwrk/compact-runtime';
 import { Oracle, type OraclePrivateState, witnesses } from '@dia/midnight-oracle-contract';
-import { nativeToken, type FinalizedTransaction, type TransactionId } from '@midnight-ntwrk/ledger-v8';
+import {
+  LedgerParameters,
+  nativeToken,
+  type FinalizedTransaction,
+  type TransactionId,
+} from '@midnight-ntwrk/ledger-v8';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
@@ -13,9 +18,11 @@ import {
   type UnboundTransaction,
   type WalletProvider,
 } from '@midnight-ntwrk/midnight-js-types';
-import { type FacadeState, type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
-import { type Resource, WalletBuilder } from '@midnight-ntwrk/wallet';
-import { type Wallet } from '@midnight-ntwrk/wallet-api';
+import { type DefaultConfiguration, type FacadeState, WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
+import { ShieldedWallet } from '@midnight-ntwrk/wallet-sdk-shielded';
+import { DustWallet } from '@midnight-ntwrk/wallet-sdk-dust-wallet';
+import { PublicKey, UnshieldedWallet } from '@midnight-ntwrk/wallet-sdk-unshielded-wallet';
+import { NoOpTransactionHistoryStorage } from '@midnight-ntwrk/wallet-sdk-abstractions';
 import { webcrypto } from 'crypto';
 import { type Logger } from 'pino';
 import * as Rx from 'rxjs';
@@ -27,12 +34,13 @@ import {
   type DeployedOracleContract,
   type OracleCircuits,
   type OracleValue,
+  type WalletKeys,
   type WalletSecretKeys,
 } from './common-types';
 import { type Config, contractConfig } from './config';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { assertIsContractAddress, toHex, ttlOneHour } from '@midnight-ntwrk/midnight-js-utils';
-import { getZswapNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as fsAsync from 'node:fs/promises';
 import * as fs from 'node:fs';
 
@@ -205,13 +213,51 @@ export function waitForFunds(wallet: WalletFacade) {
   );
 }
 
+type SerializedWalletState = {
+  readonly shielded: string;
+  readonly unshielded: string;
+  readonly dust: string;
+  readonly appliedId: string;
+};
+
+function walletConfiguration({ indexer, indexerWS, node, proofServer }: Config): DefaultConfiguration {
+  return {
+    networkId: getNetworkId(),
+    costParameters: { feeBlocksMargin: 5 },
+    relayURL: new URL(node),
+    provingServerUrl: new URL(proofServer),
+    indexerClientConnection: { indexerHttpUrl: indexer, indexerWsUrl: indexerWS },
+    txHistoryStorage: new NoOpTransactionHistoryStorage(),
+  };
+}
+
+async function initWallet(config: Config, keys: WalletKeys, serialized?: SerializedWalletState): Promise<WalletFacade> {
+  const wallet = await WalletFacade.init({
+    configuration: walletConfiguration(config),
+    shielded: (c) =>
+      serialized === undefined
+        ? ShieldedWallet(c).startWithSecretKeys(keys.shieldedSecretKeys)
+        : ShieldedWallet(c).restore(serialized.shielded),
+    unshielded: (c) =>
+      serialized === undefined
+        ? UnshieldedWallet(c).startWithPublicKey(PublicKey.fromKeyStore(keys.unshieldedKeystore))
+        : UnshieldedWallet(c).restore(serialized.unshielded),
+    dust: (c) =>
+      serialized === undefined
+        ? DustWallet(c).startWithSecretKey(keys.dustSecretKey, LedgerParameters.initialParameters().dust)
+        : DustWallet(c).restore(serialized.dust),
+  });
+  await wallet.start(keys.shieldedSecretKeys, keys.dustSecretKey);
+  return wallet;
+}
+
 export async function buildWalletAndWaitForFunds(
-  { indexer, indexerWS, node, proofServer }: Config,
-  seed: string,
+  config: Config,
+  keys: WalletKeys,
   filename: string,
-): Promise<Wallet & Resource> {
+): Promise<WalletFacade> {
   const directoryPath = process.env.SYNC_CACHE;
-  let wallet: Wallet & Resource;
+  let wallet: WalletFacade;
   if (directoryPath !== undefined) {
     if (fs.existsSync(`${directoryPath}/${filename}`)) {
       logger.info(`Attempting to restore state from ${directoryPath}/${filename}`);
@@ -221,41 +267,19 @@ export async function buildWalletAndWaitForFunds(
         serializedStream.on('finish', () => {
           serializedStream.close();
         });
-        wallet = await WalletBuilder.restore(indexer, indexerWS, proofServer, node, seed, serialized, 'info');
-        wallet.start();
-        const stateObject = JSON.parse(serialized);
-        if ((await isAnotherChain(wallet, Number(stateObject.offset))) === true) {
+        const stateObject = JSON.parse(serialized) as SerializedWalletState;
+        wallet = await initWallet(config, keys, stateObject);
+        if ((await isAnotherChain(wallet, BigInt(stateObject.appliedId))) === true) {
           logger.warn('The chain was reset, building wallet from scratch');
-          wallet = await WalletBuilder.buildFromSeed(
-            indexer,
-            indexerWS,
-            proofServer,
-            node,
-            seed,
-            getZswapNetworkId(),
-            'info',
-          );
-          wallet.start();
+          wallet = await initWallet(config, keys);
         } else {
           const newState = await waitForSync(wallet);
-          // allow for situations when there's no new index in the network between runs
-          if (newState.syncProgress?.synced) {
+          if (isSynced(newState)) {
             logger.info('Wallet was able to sync from restored state');
           } else {
-            logger.info(`Offset: ${stateObject.offset}`);
-            logger.info(`SyncProgress.lag.applyGap: ${newState.syncProgress?.lag.applyGap}`);
-            logger.info(`SyncProgress.lag.sourceGap: ${newState.syncProgress?.lag.sourceGap}`);
+            logger.info(`Applied id: ${stateObject.appliedId}`);
             logger.warn('Wallet was not able to sync from restored state, building wallet from scratch');
-            wallet = await WalletBuilder.buildFromSeed(
-              indexer,
-              indexerWS,
-              proofServer,
-              node,
-              seed,
-              getZswapNetworkId(),
-              'info',
-            );
-            wallet.start();
+            wallet = await initWallet(config, keys);
           }
         }
       } catch (error: unknown) {
@@ -267,47 +291,20 @@ export async function buildWalletAndWaitForFunds(
           logger.error(error);
         }
         logger.warn('Wallet was not able to restore using the stored state, building wallet from scratch');
-        wallet = await WalletBuilder.buildFromSeed(
-          indexer,
-          indexerWS,
-          proofServer,
-          node,
-          seed,
-          getZswapNetworkId(),
-          'info',
-        );
-        wallet.start();
+        wallet = await initWallet(config, keys);
       }
     } else {
       logger.info('Wallet save file not found, building wallet from scratch');
-      wallet = await WalletBuilder.buildFromSeed(
-        indexer,
-        indexerWS,
-        proofServer,
-        node,
-        seed,
-        getZswapNetworkId(),
-        'info',
-      );
-      wallet.start();
+      wallet = await initWallet(config, keys);
     }
   } else {
     logger.info('File path for save file not found, building wallet from scratch');
-    wallet = await WalletBuilder.buildFromSeed(
-      indexer,
-      indexerWS,
-      proofServer,
-      node,
-      seed,
-      getZswapNetworkId(),
-      'info',
-    );
-    wallet.start();
+    wallet = await initWallet(config, keys);
   }
 
   const state = await Rx.firstValueFrom(wallet.state());
-  logger.info(`Your wallet address is: ${state.address}`);
-  let balance = state.balances[nativeToken()];
+  logger.info(`Your wallet address is: ${state.unshielded.address}`);
+  let balance = state.unshielded.balances[nativeToken().raw];
   if (balance === undefined || balance === 0n) {
     logger.info(`Your wallet balance is: 0`);
     logger.info(`Waiting to receive tokens...`);
@@ -321,10 +318,6 @@ export function randomBytes(length: number): Uint8Array {
   const bytes = new Uint8Array(length);
   webcrypto.getRandomValues(bytes);
   return bytes;
-}
-
-export function buildFreshWallet(config: Config): Promise<Wallet & Resource> {
-  return buildWalletAndWaitForFunds(config, toHex(randomBytes(32)), '');
 }
 
 export async function configureProviders(wallet: WalletFacade, keys: WalletSecretKeys, config: Config) {
@@ -358,26 +351,31 @@ export function streamToString(stream: fs.ReadStream): Promise<string> {
   });
 }
 
-export async function isAnotherChain(wallet: Wallet, offset: number) {
-  await waitForSyncProgress(wallet);
-  // Here wallet does not expose the offset block it is synced to, that is why this workaround
-  const walletOffset = Number(JSON.parse(await wallet.serializeState()).offset);
-  if (walletOffset < offset - 1) {
-    logger.info(`Your offset offset is: ${walletOffset} restored offset: ${offset} so it is another chain`);
+export async function isAnotherChain(wallet: WalletFacade, appliedId: bigint) {
+  const state = await waitForSyncProgress(wallet);
+  const walletAppliedId = state.unshielded.progress.appliedId;
+  if (walletAppliedId < appliedId - 1n) {
+    logger.info(`Your applied id is: ${walletAppliedId} restored id: ${appliedId} so it is another chain`);
     return true;
   } else {
-    logger.info(`Your offset offset is: ${walletOffset} restored offset: ${offset} ok`);
+    logger.info(`Your applied id is: ${walletAppliedId} restored id: ${appliedId} ok`);
     return false;
   }
 }
 
-export async function saveState(wallet: Wallet, filename: string) {
+export async function saveState(wallet: WalletFacade, filename: string) {
   const directoryPath = process.env.SYNC_CACHE;
   if (directoryPath !== undefined) {
     logger.info(`Saving state in ${directoryPath}/${filename}`);
     try {
       await fsAsync.mkdir(directoryPath, { recursive: true });
-      const serializedState = await wallet.serializeState();
+      const state = await Rx.firstValueFrom(wallet.state());
+      const serializedState = JSON.stringify({
+        shielded: await wallet.shielded.serializeState(),
+        unshielded: await wallet.unshielded.serializeState(),
+        dust: await wallet.dust.serializeState(),
+        appliedId: state.unshielded.progress.appliedId.toString(),
+      } satisfies SerializedWalletState);
       const writer = fs.createWriteStream(`${directoryPath}/${filename}`);
       writer.write(serializedState);
 
