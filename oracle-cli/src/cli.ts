@@ -1,11 +1,13 @@
-import { type Resource } from '@midnight-ntwrk/wallet';
-import { type Wallet } from '@midnight-ntwrk/wallet-api';
+import { DustSecretKey, ZswapSecretKeys } from '@midnight-ntwrk/ledger-v8';
+import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
+import { createKeystore } from '@midnight-ntwrk/wallet-sdk-unshielded-wallet';
 import dotenv from 'dotenv';
 import { stdin as input, stdout as output } from 'node:process';
 import { createInterface, type Interface } from 'node:readline/promises';
 import { type Logger } from 'pino';
 import { type StartedDockerComposeEnvironment, type DockerComposeEnvironment } from 'testcontainers';
-import { type OracleProviders, type DeployedOracleContract } from './common-types';
+import { type OracleProviders, type DeployedOracleContract, type WalletKeys } from './common-types';
 import { type Config, StandaloneConfig, StandaloneE2EConfig } from './config';
 import * as api from './api';
 import { HDWallet, Roles } from '@midnight-ntwrk/wallet-sdk-hd';
@@ -86,11 +88,31 @@ async function mainLoop(providers: OracleProviders, rli: Interface): Promise<voi
   }
 }
 
-async function buildWallet(config: Config, seed: string): Promise<(Wallet & Resource) | null> {
+async function buildWallet(config: Config, keys: WalletKeys): Promise<WalletFacade | null> {
   if (config instanceof StandaloneConfig) {
-    return api.buildWalletAndWaitForFunds(config, GENESIS_MINT_WALLET_SEED, '');
+    return api.buildWalletAndWaitForFunds(config, deriveAllKeys(Buffer.from(GENESIS_MINT_WALLET_SEED, 'hex')), '');
   }
-  return api.buildWalletAndWaitForFunds(config, seed, '');
+  return api.buildWalletAndWaitForFunds(config, keys, '');
+}
+
+function deriveAllKeys(seed: Uint8Array): WalletKeys {
+  const generatedWallet = HDWallet.fromSeed(seed);
+  if (generatedWallet.type !== 'seedOk') {
+    throw new Error('Error generating HDWallet');
+  }
+  const derivationResult = generatedWallet.hdWallet
+    .selectAccount(0)
+    .selectRoles([Roles.Zswap, Roles.NightExternal, Roles.Dust])
+    .deriveKeysAt(0);
+  generatedWallet.hdWallet.clear();
+  if (derivationResult.type !== 'keysDerived') {
+    throw new Error('Error deriving keys');
+  }
+  return {
+    unshieldedKeystore: createKeystore(derivationResult.keys[Roles.NightExternal], getNetworkId()),
+    shieldedSecretKeys: ZswapSecretKeys.fromSeed(derivationResult.keys[Roles.Zswap]),
+    dustSecretKey: DustSecretKey.fromSeed(derivationResult.keys[Roles.Dust]),
+  };
 }
 
 function mapContainerPort(env: StartedDockerComposeEnvironment, url: string, containerName: string) {
@@ -120,27 +142,13 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
 
   const mnemonic = process.env.MIDNIGHT_SEED || '';
 
-  const mnemonicSeed = bip39.mnemonicToSeedSync(mnemonic);
-  const generatedWallet = HDWallet.fromSeed(mnemonicSeed);
+  const keys = deriveAllKeys(bip39.mnemonicToSeedSync(mnemonic));
 
-  let seed = '';
-
-  if (generatedWallet.type == 'seedOk') {
-    const zswapKey = generatedWallet.hdWallet.selectAccount(0).selectRole(Roles.Zswap).deriveKeyAt(0);
-    if (zswapKey.type === 'keyDerived') {
-      seed = Buffer.from(zswapKey.key).toString('hex');
-    } else {
-      logger.error('Error deriving key');
-    }
-  } else {
-    logger.error('Error generating HDWallet');
-  }
-
-  const wallet = await buildWallet(config, seed);
+  const wallet = await buildWallet(config, keys);
 
   try {
     if (wallet !== null) {
-      const providers = await api.configureProviders(wallet, config);
+      const providers = await api.configureProviders(wallet, keys, config);
       await mainLoop(providers, rli);
     }
   } catch (e) {
@@ -160,7 +168,7 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
     } finally {
       try {
         if (wallet !== null) {
-          await wallet.close();
+          await wallet.stop();
         }
       } catch (e) {
         logger.error(`Error closing wallet: ${e}`);
