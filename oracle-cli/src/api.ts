@@ -13,7 +13,7 @@ import {
   type UnboundTransaction,
   type WalletProvider,
 } from '@midnight-ntwrk/midnight-js-types';
-import { type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
+import { type FacadeState, type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
 import { type Resource, WalletBuilder } from '@midnight-ntwrk/wallet';
 import { type Wallet } from '@midnight-ntwrk/wallet-api';
 import { webcrypto } from 'crypto';
@@ -168,60 +168,38 @@ export function createWalletAndMidnightProvider(
   };
 }
 
-export function waitForSync(wallet: Wallet) {
+function isSynced(state: FacadeState): boolean {
+  return state.shielded.state.progress.isStrictlyComplete() && state.unshielded.progress.isStrictlyComplete();
+}
+
+function logSyncProgress(state: FacadeState): void {
+  const shielded = state.shielded.state.progress.isStrictlyComplete();
+  const unshielded = state.unshielded.progress.isStrictlyComplete();
+  const dust = state.dust.state.progress.isStrictlyComplete();
+  logger.info(`Waiting for funds. shielded=${shielded}, unshielded=${unshielded}, dust=${dust}`);
+}
+
+export function waitForSync(wallet: WalletFacade) {
+  return Rx.firstValueFrom(wallet.state().pipe(Rx.throttleTime(5_000), Rx.tap(logSyncProgress), Rx.filter(isSynced)));
+}
+
+export function waitForSyncProgress(wallet: WalletFacade) {
   return Rx.firstValueFrom(
     wallet.state().pipe(
       Rx.throttleTime(5_000),
-      Rx.tap((state) => {
-        const applyGap = state.syncProgress?.lag.applyGap ?? 0n;
-        const sourceGap = state.syncProgress?.lag.sourceGap ?? 0n;
-        logger.info(
-          `Waiting for funds. Backend lag: ${sourceGap}, wallet lag: ${applyGap}, transactions=${state.transactionHistory.length}`,
-        );
-      }),
-      Rx.filter((state) => {
-        // Let's allow progress only if wallet is synced fully
-        return state.syncProgress !== undefined && state.syncProgress.synced;
-      }),
+      Rx.tap(logSyncProgress),
+      Rx.filter((state) => state.shielded.state.progress.isConnected || state.unshielded.progress.isConnected),
     ),
   );
 }
 
-export function waitForSyncProgress(wallet: Wallet) {
-  return Rx.firstValueFrom(
-    wallet.state().pipe(
-      Rx.throttleTime(5_000),
-      Rx.tap((state) => {
-        const applyGap = state.syncProgress?.lag.applyGap ?? 0n;
-        const sourceGap = state.syncProgress?.lag.sourceGap ?? 0n;
-        logger.info(
-          `Waiting for funds. Backend lag: ${sourceGap}, wallet lag: ${applyGap}, transactions=${state.transactionHistory.length}`,
-        );
-      }),
-      Rx.filter((state) => {
-        // Let's allow progress only if syncProgress is defined
-        return state.syncProgress !== undefined;
-      }),
-    ),
-  );
-}
-
-export function waitForFunds(wallet: Wallet) {
+export function waitForFunds(wallet: WalletFacade) {
   return Rx.firstValueFrom(
     wallet.state().pipe(
       Rx.throttleTime(10_000),
-      Rx.tap((state) => {
-        const applyGap = state.syncProgress?.lag.applyGap ?? 0n;
-        const sourceGap = state.syncProgress?.lag.sourceGap ?? 0n;
-        logger.info(
-          `Waiting for funds. Backend lag: ${sourceGap}, wallet lag: ${applyGap}, transactions=${state.transactionHistory.length}`,
-        );
-      }),
-      Rx.filter((state) => {
-        // Let's allow progress only if wallet is synced
-        return state.syncProgress?.synced === true;
-      }),
-      Rx.map((s) => s.balances[nativeToken()] ?? 0n),
+      Rx.tap(logSyncProgress),
+      Rx.filter(isSynced),
+      Rx.map((state) => state.unshielded.balances[nativeToken().raw] ?? 0n),
       Rx.filter((balance) => balance > 0n),
     ),
   );
