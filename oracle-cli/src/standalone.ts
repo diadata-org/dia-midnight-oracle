@@ -21,7 +21,10 @@ import { currentDir, StandaloneConfig } from './config.js';
 
 const config = new StandaloneConfig();
 const dockerEnv = new DockerComposeEnvironment(path.resolve(currentDir, '..'), 'standalone.yml')
-  .withWaitStrategy('counter-proof-server', Wait.forLogMessage('Actix runtime found; starting in Actix runtime', 1))
-  .withWaitStrategy('counter-indexer', Wait.forLogMessage(/starting indexing/, 1));
+  .withWaitStrategy('midnight-dia-oracle-proof-server', Wait.forLogMessage('Actix runtime found; starting in Actix runtime', 1))
+  .withWaitStrategy(
+    'midnight-dia-oracle-indexer',
+    Wait.forLogMessage(/highest finalized block on node.*"height":[1-9]/, 1).withStartupTimeout(300_000),
+  );
 const logger = await createLogger(config.logDir);
 await run(config, logger, dockerEnv);

@@ -1,10 +1,11 @@
 import { Oracle, type OraclePrivateState } from '@dia/midnight-oracle-contract';
-import type { ImpureCircuitId, MidnightProviders } from '@midnight-ntwrk/midnight-js-types';
+import type { Contract } from '@midnight-ntwrk/compact-js';
+import type { MidnightProviders } from '@midnight-ntwrk/midnight-js-types';
 import type { DeployedContract, FoundContract } from '@midnight-ntwrk/midnight-js-contracts';
 import type { DustSecretKey, ZswapSecretKeys } from '@midnight-ntwrk/ledger-v8';
 import type { UnshieldedKeystore } from '@midnight-ntwrk/wallet-sdk-unshielded-wallet';
 
-export type OracleCircuits = ImpureCircuitId<Oracle.Contract<OraclePrivateState>>;
+export type OracleCircuits = Contract.ProvableCircuitId<Oracle.Contract<OraclePrivateState>>;
 
 export const OraclePrivateStateId = 'oraclePrivateState';
 

@@ -8,7 +8,7 @@
     "testnet-remote": "node --experimental-specifier-resolution=node --loader ts-node/esm src/testnet-remote.ts",
     "testnet-remote-ps": "cp -r proof-server-testnet.yml ./dist/ && node --experimental-specifier-resolution=node --loader ts-node/esm src/testnet-remote-start-proof-server.ts",
     "testnet-local": "node --experimental-specifier-resolution=node --loader ts-node/esm src/testnet-local.ts",
-    "standalone": "docker compose -f standalone.yml pull && node --experimental-specifier-resolution=node --loader ts-node/esm src/standalone.ts",
+    "standalone": "docker rm -f midnight-dia-oracle-indexer midnight-dia-oracle-node midnight-dia-oracle-proof-server 2>/dev/null || true; docker compose -f standalone.yml pull && node --experimental-specifier-resolution=node --loader ts-node/esm src/standalone.ts",
     "standalone-e2e": "node --experimental-specifier-resolution=node --loader ts-node/esm src/standalone-e2e.ts",
     "build": "rm -rf dist && tsc --project tsconfig.build.json",
     "lint": "eslint src",

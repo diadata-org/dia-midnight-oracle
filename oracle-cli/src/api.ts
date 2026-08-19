@@ -306,7 +306,7 @@ export async function buildWalletAndWaitForFunds(
   }
 
   const state = await Rx.firstValueFrom(wallet.state());
-  logger.info(`Your wallet address is: ${state.unshielded.address}`);
+  logger.info(`Your wallet address is: ${keys.unshieldedKeystore.getBech32Address()}`);
   let balance = state.unshielded.balances[nativeToken().raw];
   if (balance === undefined || balance === 0n) {
     logger.info(`Your wallet balance is: 0`);
@@ -325,6 +325,7 @@ export function randomBytes(length: number): Uint8Array {
 
 export async function configureProviders(wallet: WalletFacade, keys: WalletSecretKeys, config: Config) {
   const walletAndMidnightProvider = createWalletAndMidnightProvider(wallet, keys);
+  const zkConfigProvider = new NodeZkConfigProvider<OracleCircuits>(contractConfig.zkConfigPath);
   return {
     privateStateProvider: levelPrivateStateProvider<typeof OraclePrivateStateId>({
       privateStateStoreName: contractConfig.privateStateStoreName,
@@ -332,8 +333,8 @@ export async function configureProviders(wallet: WalletFacade, keys: WalletSecre
       accountId: contractConfig.accountId,
     }),
     publicDataProvider: indexerPublicDataProvider(config.indexer, config.indexerWS),
-    zkConfigProvider: new NodeZkConfigProvider<OracleCircuits>(contractConfig.zkConfigPath),
-    proofProvider: httpClientProofProvider(config.proofServer),
+    zkConfigProvider,
+    proofProvider: httpClientProofProvider(config.proofServer, zkConfigProvider),
     walletProvider: walletAndMidnightProvider,
     midnightProvider: walletAndMidnightProvider,
   };
