@@ -88,11 +88,15 @@ async function mainLoop(providers: OracleProviders, rli: Interface): Promise<voi
   }
 }
 
-async function buildWallet(config: Config, keys: WalletKeys): Promise<WalletFacade | null> {
+async function buildWallet(
+  config: Config,
+  keys: WalletKeys,
+): Promise<{ wallet: WalletFacade; keys: WalletKeys } | null> {
   if (config instanceof StandaloneConfig) {
-    return api.buildWalletAndWaitForFunds(config, deriveAllKeys(Buffer.from(GENESIS_MINT_WALLET_SEED, 'hex')), '');
+    const genesisKeys = deriveAllKeys(Buffer.from(GENESIS_MINT_WALLET_SEED, 'hex'));
+    return { wallet: await api.buildWalletAndWaitForFunds(config, genesisKeys, ''), keys: genesisKeys };
   }
-  return api.buildWalletAndWaitForFunds(config, keys, '');
+  return { wallet: await api.buildWalletAndWaitForFunds(config, keys, ''), keys };
 }
 
 function deriveAllKeys(seed: Uint8Array): WalletKeys {
@@ -144,11 +148,12 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
 
   const keys = deriveAllKeys(bip39.mnemonicToSeedSync(mnemonic));
 
-  const wallet = await buildWallet(config, keys);
+  const built = await buildWallet(config, keys);
+  const wallet = built === null ? null : built.wallet;
 
   try {
-    if (wallet !== null) {
-      const providers = await api.configureProviders(wallet, keys, config);
+    if (built !== null && wallet !== null) {
+      const providers = await api.configureProviders(wallet, built.keys, config);
       await mainLoop(providers, rli);
     }
   } catch (e) {
