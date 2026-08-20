@@ -183,11 +183,45 @@ function isSynced(state: FacadeState): boolean {
   return state.shielded.state.progress.isStrictlyComplete() && state.unshielded.progress.isStrictlyComplete();
 }
 
+/**
+ * Renders a channel's replay cursor. On a fresh wallet the shielded and DUST channels stream the
+ * chain's entire event history, which takes a long time on a network with real history - without the
+ * cursor the log is indistinguishable from a hang.
+ */
+function channelProgress(progress: {
+  appliedIndex: bigint;
+  highestRelevantWalletIndex: bigint;
+  isStrictlyComplete: () => boolean;
+}): string {
+  if (progress.isStrictlyComplete()) {
+    return 'synced';
+  }
+  const { appliedIndex: applied, highestRelevantWalletIndex: target } = progress;
+  // The target is only known once the first progress update arrives from the indexer.
+  if (target <= 0n) {
+    return `${applied}/? `.trim();
+  }
+  const percent = Number((applied * 1000n) / target) / 10;
+  return `${applied}/${target} (${percent.toFixed(1)}%)`;
+}
+
+/** DUST pays the fees, so report it next to sync state. Throws while the DUST channel is still catching up. */
+function dustBalance(state: FacadeState): bigint {
+  try {
+    return state.dust.balance(new Date());
+  } catch {
+    return 0n;
+  }
+}
+
 function logSyncProgress(state: FacadeState): void {
-  const shielded = state.shielded.state.progress.isStrictlyComplete();
-  const unshielded = state.unshielded.progress.isStrictlyComplete();
-  const dust = state.dust.state.progress.isStrictlyComplete();
-  logger.info(`Waiting for funds. shielded=${shielded}, unshielded=${unshielded}, dust=${dust}`);
+  const unshielded = state.unshielded.progress.isStrictlyComplete()
+    ? 'synced'
+    : `applied ${state.unshielded.progress.appliedId}`;
+  logger.info(
+    `Waiting for funds. unshielded=${unshielded}, shielded=${channelProgress(state.shielded.state.progress)}, ` +
+      `dust=${channelProgress(state.dust.state.progress)}, dustBalance=${dustBalance(state)}`,
+  );
 }
 
 export function waitForSync(wallet: WalletFacade) {
@@ -231,6 +265,11 @@ function walletConfiguration({ indexer, indexerWS, node, proofServer }: Config):
     provingServerUrl: new URL(proofServer),
     indexerClientConnection: { indexerHttpUrl: indexer, indexerWsUrl: indexerWS },
     txHistoryStorage: new NoOpTransactionHistoryStorage(),
+    // A fresh wallet replays the chain's entire shielded and DUST event history. The SDK defaults
+    // (size 10, timeout 1ms, spacing 4ms) apply that backlog in tiny batches behind a 4ms throttle,
+    // which on a network with real history decays under GC pressure and exhausts the heap before
+    // finishing. Larger batches with the inter-batch delay disabled keep memory flat and the rate up.
+    batchUpdates: { size: 300_000, timeout: 100, spacing: 0 },
   };
 }
 
