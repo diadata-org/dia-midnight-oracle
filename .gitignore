@@ -59,3 +59,5 @@ jspm_packages/
 
 # Compact
 managed/
+# Local analysis / reference material (not part of the project)
+oracle-cli/.sync-cache

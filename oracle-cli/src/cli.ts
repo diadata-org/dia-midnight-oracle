@@ -88,15 +88,27 @@ async function mainLoop(providers: OracleProviders, rli: Interface): Promise<voi
   }
 }
 
+/**
+ * Name of the wallet sync cache file. Scoped by network and wallet so that a snapshot taken on one
+ * chain (or with one seed) is never restored onto another - the standalone genesis wallet and the
+ * mnemonic wallet both run on 'undeployed', so the network id alone is not enough.
+ */
+function cacheFilename(keys: WalletKeys): string {
+  const address = String(keys.unshieldedKeystore.getBech32Address());
+  return `wallet-${getNetworkId()}-${address.slice(-12)}.json`;
+}
+
 async function buildWallet(
   config: Config,
   keys: WalletKeys,
-): Promise<{ wallet: WalletFacade; keys: WalletKeys } | null> {
+): Promise<{ wallet: WalletFacade; keys: WalletKeys; filename: string } | null> {
   if (config instanceof StandaloneConfig) {
     const genesisKeys = deriveAllKeys(Buffer.from(GENESIS_MINT_WALLET_SEED, 'hex'));
-    return { wallet: await api.buildWalletAndWaitForFunds(config, genesisKeys, ''), keys: genesisKeys };
+    const filename = cacheFilename(genesisKeys);
+    return { wallet: await api.buildWalletAndWaitForFunds(config, genesisKeys, filename), keys: genesisKeys, filename };
   }
-  return { wallet: await api.buildWalletAndWaitForFunds(config, keys, ''), keys };
+  const filename = cacheFilename(keys);
+  return { wallet: await api.buildWalletAndWaitForFunds(config, keys, filename), keys, filename };
 }
 
 function deriveAllKeys(seed: Uint8Array): WalletKeys {
@@ -172,7 +184,10 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
       logger.error(`Error closing readline interface: ${e}`);
     } finally {
       try {
-        if (wallet !== null) {
+        if (built !== null && wallet !== null) {
+          // Persist the sync state on a graceful shutdown, so the next run resumes from this point
+          // instead of replaying the whole chain history.
+          await api.saveState(wallet, built.filename);
           await wallet.stop();
         }
       } catch (e) {

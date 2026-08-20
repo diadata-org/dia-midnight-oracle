@@ -382,17 +382,19 @@ export async function saveState(wallet: WalletFacade, filename: string) {
         dust: await wallet.dust.serializeState(),
         appliedId: state.unshielded.progress.appliedId.toString(),
       } satisfies SerializedWalletState);
-      const writer = fs.createWriteStream(`${directoryPath}/${filename}`);
-      writer.write(serializedState);
-
-      writer.on('finish', function () {
-        logger.info(`File '${directoryPath}/${filename}' written successfully.`);
+      await new Promise<void>((resolve, reject) => {
+        const writer = fs.createWriteStream(`${directoryPath}/${filename}`);
+        writer.on('finish', () => {
+          logger.info(`File '${directoryPath}/${filename}' written successfully.`);
+          resolve();
+        });
+        writer.on('error', (err) => {
+          logger.error(err);
+          reject(err);
+        });
+        writer.write(serializedState);
+        writer.end();
       });
-
-      writer.on('error', function (err) {
-        logger.error(err);
-      });
-      writer.end();
     } catch (e) {
       if (typeof e === 'string') {
         logger.warn(e);
