@@ -45,6 +45,13 @@ import * as fsAsync from 'node:fs/promises';
 import * as fs from 'node:fs';
 
 let logger: Logger;
+
+/**
+ * Set when the wallet's state stream reports an error. A failed sync can leave the wallet's local
+ * state inconsistent with the chain, and persisting that produces transactions the node rejects
+ * (`1010: Invalid Transaction`), so the cache is skipped once this trips.
+ */
+let syncFailed = false;
 // Instead of setting globalThis.crypto which is read-only, we'll ensure crypto is available
 // but won't try to overwrite the global property
 // @ts-expect-error: It's needed to enable WebSocket usage through apollo
@@ -214,14 +221,54 @@ function dustBalance(state: FacadeState): bigint {
   }
 }
 
-function logSyncProgress(state: FacadeState): void {
+function syncSummary(state: FacadeState): string {
   const unshielded = state.unshielded.progress.isStrictlyComplete()
     ? 'synced'
     : `applied ${state.unshielded.progress.appliedId}`;
-  logger.info(
-    `Waiting for funds. unshielded=${unshielded}, shielded=${channelProgress(state.shielded.state.progress)}, ` +
-      `dust=${channelProgress(state.dust.state.progress)}, dustBalance=${dustBalance(state)}`,
+  return (
+    `unshielded=${unshielded}, shielded=${channelProgress(state.shielded.state.progress)}, ` +
+    `dust=${channelProgress(state.dust.state.progress)}, dustBalance=${dustBalance(state)}`
   );
+}
+
+function logSyncProgress(state: FacadeState): void {
+  logger.info(`Waiting for funds. ${syncSummary(state)}`);
+}
+
+/**
+ * Reports sync progress for as long as the caller keeps the returned unsubscribe function unused.
+ * The DUST and shielded channels keep replaying chain history after the menu appears, and fees cannot
+ * be paid until DUST is spendable - without this the CLI is silent and an early write fails with
+ * `Insufficient Funds: could not balance dust` for no visible reason.
+ */
+export function reportSyncProgress(wallet: WalletFacade, intervalMs = 30_000): () => void {
+  let announced = false;
+  const subscription = wallet
+    .state()
+    .pipe(Rx.throttleTime(intervalMs))
+    .subscribe({
+      next: (state) => {
+        const dust = dustBalance(state);
+        const synced =
+          state.unshielded.progress.isStrictlyComplete() &&
+          state.shielded.state.progress.isStrictlyComplete() &&
+          state.dust.state.progress.isStrictlyComplete();
+        if (synced && dust > 0n) {
+          if (!announced) {
+            announced = true;
+            logger.info(`Wallet fully synced. DUST available for fees: ${dust}`);
+          }
+          return;
+        }
+        announced = false;
+        logger.info(`Syncing. ${syncSummary(state)}`);
+      },
+      error: (e) => {
+        syncFailed = true;
+        logger.warn(`Wallet sync reported an error, the sync cache will not be saved: ${e}`);
+      },
+    });
+  return () => subscription.unsubscribe();
 }
 
 export function waitForSync(wallet: WalletFacade) {
@@ -409,6 +456,10 @@ export async function isAnotherChain(wallet: WalletFacade, appliedId: bigint) {
 }
 
 export async function saveState(wallet: WalletFacade, filename: string) {
+  if (syncFailed) {
+    logger.warn('Not saving the sync cache: the wallet reported a sync error and its state may be inconsistent');
+    return;
+  }
   const directoryPath = process.env.SYNC_CACHE;
   if (directoryPath !== undefined) {
     logger.info(`Saving state in ${directoryPath}/${filename}`);

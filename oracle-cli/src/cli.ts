@@ -162,6 +162,9 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
 
   const built = await buildWallet(config, keys);
   const wallet = built === null ? null : built.wallet;
+  // The DUST and shielded channels keep replaying chain history after the menu appears, and no write
+  // can pay its fee until DUST is spendable, so keep reporting progress while the operator is idle.
+  const stopSyncReporting = wallet === null ? () => {} : api.reportSyncProgress(wallet);
 
   try {
     if (built !== null && wallet !== null) {
@@ -177,6 +180,7 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
       throw e;
     }
   } finally {
+    stopSyncReporting();
     try {
       rli.close();
       rli.removeAllListeners();
