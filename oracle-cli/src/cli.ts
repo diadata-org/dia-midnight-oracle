@@ -1,5 +1,4 @@
-import { DustSecretKey, ZswapSecretKeys } from '@midnight-ntwrk/ledger-v8';
-import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { ZswapSecretKeys } from '@midnightntwrk/ledger-v9';
 import { type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
 import { createKeystore } from '@midnight-ntwrk/wallet-sdk-unshielded-wallet';
 import dotenv from 'dotenv';
@@ -10,7 +9,7 @@ import { type StartedDockerComposeEnvironment, type DockerComposeEnvironment } f
 import { type OracleProviders, type DeployedOracleContract, type WalletKeys } from './common-types';
 import { type Config, StandaloneConfig, StandaloneE2EConfig } from './config';
 import * as api from './api';
-import { HDWallet, Roles } from '@midnight-ntwrk/wallet-sdk-hd';
+import { WalletSeeds } from '@midnight-ntwrk/wallet-sdk-hd';
 import * as bip39 from 'bip39';
 
 dotenv.config();
@@ -93,9 +92,9 @@ async function mainLoop(providers: OracleProviders, rli: Interface): Promise<voi
  * chain (or with one seed) is never restored onto another - the standalone genesis wallet and the
  * mnemonic wallet both run on 'undeployed', so the network id alone is not enough.
  */
-function cacheFilename(keys: WalletKeys): string {
+function cacheFilename(config: Config, keys: WalletKeys): string {
   const address = String(keys.unshieldedKeystore.getBech32Address());
-  return `wallet-${getNetworkId()}-${address.slice(-12)}.json`;
+  return `wallet-${config.networkId}-${address.slice(-12)}.json`;
 }
 
 async function buildWallet(
@@ -103,31 +102,22 @@ async function buildWallet(
   keys: WalletKeys,
 ): Promise<{ wallet: WalletFacade; keys: WalletKeys; filename: string } | null> {
   if (config instanceof StandaloneConfig) {
-    const genesisKeys = deriveAllKeys(Buffer.from(GENESIS_MINT_WALLET_SEED, 'hex'));
-    const filename = cacheFilename(genesisKeys);
+    const genesisKeys = deriveAllKeys(Buffer.from(GENESIS_MINT_WALLET_SEED, 'hex'), config.networkId);
+    const filename = cacheFilename(config, genesisKeys);
     return { wallet: await api.buildWalletAndWaitForFunds(config, genesisKeys, filename), keys: genesisKeys, filename };
   }
-  const filename = cacheFilename(keys);
+  const filename = cacheFilename(config, keys);
   return { wallet: await api.buildWalletAndWaitForFunds(config, keys, filename), keys, filename };
 }
 
-function deriveAllKeys(seed: Uint8Array): WalletKeys {
-  const generatedWallet = HDWallet.fromSeed(seed);
-  if (generatedWallet.type !== 'seedOk') {
-    throw new Error('Error generating HDWallet');
-  }
-  const derivationResult = generatedWallet.hdWallet
-    .selectAccount(0)
-    .selectRoles([Roles.Zswap, Roles.NightExternal, Roles.Dust])
-    .deriveKeysAt(0);
-  generatedWallet.hdWallet.clear();
-  if (derivationResult.type !== 'keysDerived') {
-    throw new Error('Error deriving keys');
-  }
+// Same tree positions as before (account 0, address index 0; Zswap, NightExternal and Dust roles),
+// so the wallet, its DUST and the contract's `oracle_updater` key are unchanged by the upgrade.
+function deriveAllKeys(masterSeed: Uint8Array, networkId: string): WalletKeys {
+  const seeds = WalletSeeds.fromMasterSeed(masterSeed);
   return {
-    unshieldedKeystore: createKeystore(derivationResult.keys[Roles.NightExternal], getNetworkId()),
-    shieldedSecretKeys: ZswapSecretKeys.fromSeed(derivationResult.keys[Roles.Zswap]),
-    dustSecretKey: DustSecretKey.fromSeed(derivationResult.keys[Roles.Dust]),
+    seeds,
+    shieldedSecretKeys: ZswapSecretKeys.fromSeed(seeds.shielded),
+    unshieldedKeystore: createKeystore({ kind: 'schnorr', secret: seeds.unshielded }, networkId),
   };
 }
 
@@ -158,7 +148,7 @@ export async function run(config: Config, _logger: Logger, dockerEnv?: DockerCom
 
   const mnemonic = process.env.MIDNIGHT_SEED || '';
 
-  const keys = deriveAllKeys(bip39.mnemonicToSeedSync(mnemonic));
+  const keys = deriveAllKeys(bip39.mnemonicToSeedSync(mnemonic), config.networkId);
 
   const built = await buildWallet(config, keys);
   const wallet = built === null ? null : built.wallet;

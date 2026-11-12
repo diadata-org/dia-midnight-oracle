@@ -1,22 +1,18 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { encodeCoinPublicKey, type CoinPublicKey, type ContractAddress } from '@midnight-ntwrk/compact-runtime';
-import { Oracle, type OraclePrivateState } from '@dia/midnight-oracle-contract';
-import {
-  LedgerParameters,
-  nativeToken,
-  type FinalizedTransaction,
-  type TransactionId,
-} from '@midnight-ntwrk/ledger-v8';
+import { Oracle, type OraclePrivateState, ContractStateValue } from '@dia/midnight-oracle-contract';
+import { loadLedgerEra } from '@midnight-ntwrk/midnight-js-protocol';
+import { nativeToken } from '@midnightntwrk/ledger-v9';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import {
-  type FinalizedTxData,
+  createLedger9MidnightProvider,
+  createLedger9WalletProvider,
   type MidnightProvider,
-  type UnboundTransaction,
   type WalletProvider,
 } from '@midnight-ntwrk/midnight-js-types';
 import { type DefaultConfiguration, type FacadeState, WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
@@ -35,12 +31,10 @@ import {
   type OracleCircuits,
   type OracleValue,
   type WalletKeys,
-  type WalletSecretKeys,
 } from './common-types';
 import { type Config, contractConfig } from './config';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
-import { assertIsContractAddress, ttlOneHour } from '@midnight-ntwrk/midnight-js-utils';
-import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { assertIsContractAddress, createMidnightProviders } from '@midnight-ntwrk/midnight-js-utils';
 import * as fsAsync from 'node:fs/promises';
 import * as fs from 'node:fs';
 
@@ -67,16 +61,22 @@ BigInt.prototype.toJSON = function (): string {
   return this.toString();
 };
 
+// A contract state keeps the era of the ledger that wrote it: the oracle's state is ledger 8 until its
+// first write after the fork, ledger 9 from then on. Midnight.js reads either era into an era-neutral
+// encoding, which the contract's own runtime (0.16, ledger 8) turns back into a state it can read.
 export async function getOracleLedgerState(
   providers: OracleProviders,
   contractAddress: ContractAddress,
 ): Promise<Oracle.Ledger | null> {
   assertIsContractAddress(contractAddress);
   logger.info('Checking contract ledger state...');
-  const state = await providers.publicDataProvider
-    .queryContractState(contractAddress)
-    .then((contractState) => (contractState != null ? Oracle.ledger(contractState.data) : null));
-  return state;
+  const read = await providers.publicDataProvider.queryContractState(contractAddress);
+  if (read == null) {
+    return null;
+  }
+  const era = await loadLedgerEra(read.contractState.era);
+  const encoded = era.extractState(read.contractState.serialize());
+  return Oracle.ledger(ContractStateValue.decode(encoded as Parameters<typeof ContractStateValue.decode>[0]));
 }
 
 export const compiledOracleContract = CompiledContract.make('Oracle', Oracle.Contract).pipe(
@@ -116,7 +116,7 @@ export async function setValue(
   oracleContract: DeployedOracleContract,
   key: string,
   value: OracleValue,
-): Promise<FinalizedTxData> {
+): Promise<{ txId: string; blockHeight: number }> {
   logger.info('Performing oracle value update...');
   const finalizedTxData = await oracleContract.callTx.set_value(key, value);
   logger.info(`Transaction ${finalizedTxData.public.txId} added in block ${finalizedTxData.public.blockHeight}`);
@@ -126,7 +126,7 @@ export async function setValue(
 export async function setMultipleValues(
   oracleContract: DeployedOracleContract,
   batch: [string, OracleValue][],
-): Promise<FinalizedTxData> {
+): Promise<{ txId: string; blockHeight: number }> {
   logger.info('Performing batch oracle update...');
   const finalizedTxData = await oracleContract.callTx.set_multiple_values(batch);
   logger.info(`Transaction ${finalizedTxData.public.txId} added in block ${finalizedTxData.public.blockHeight}`);
@@ -136,7 +136,7 @@ export async function setMultipleValues(
 export async function changeOracleUpdater(
   oracleContract: DeployedOracleContract,
   newOracleUpdater: CoinPublicKey,
-): Promise<FinalizedTxData> {
+): Promise<{ txId: string; blockHeight: number }> {
   const coinPublicKey = {
     bytes: encodeCoinPublicKey(newOracleUpdater),
   };
@@ -165,29 +165,30 @@ export async function displayOracleValue(
   return { contractAddress, state };
 }
 
+// Midnight.js 5 hands transactions over as era-tagged handles, and the wallet facade keeps handles of its
+// own; the two meet as bytes. Both providers serve ledger 9 only, the only ledger the networks accept.
+// The facade signs with the seeds it was started from, so balancing no longer takes secret keys.
 export function createWalletAndMidnightProvider(
   wallet: WalletFacade,
-  keys: WalletSecretKeys,
-): WalletProvider & MidnightProvider {
-  return {
-    getCoinPublicKey() {
-      return keys.shieldedSecretKeys.coinPublicKey;
-    },
-    getEncryptionPublicKey() {
-      return keys.shieldedSecretKeys.encryptionPublicKey;
-    },
-    async balanceTx(tx: UnboundTransaction, ttl: Date = ttlOneHour()): Promise<FinalizedTransaction> {
-      const recipe = await wallet.balanceUnboundTransaction(tx, keys, { ttl });
+  keys: WalletKeys,
+): { walletProvider: WalletProvider; midnightProvider: MidnightProvider } {
+  const walletProvider = createLedger9WalletProvider({
+    getCoinPublicKey: () => keys.shieldedSecretKeys.coinPublicKey,
+    getEncryptionPublicKey: () => keys.shieldedSecretKeys.encryptionPublicKey,
+    async balanceTx(tx, ttl) {
+      const unbound = wallet.adoptTransaction(tx.serialize(), 'Unbound');
+      const recipe = await wallet.balanceUnboundTransaction(unbound, { ttl: ttl ?? new Date(Date.now() + TX_TTL_MS) });
       return wallet.finalizeRecipe(recipe);
     },
-    submitTx(tx: FinalizedTransaction): Promise<TransactionId> {
-      return wallet.submitTransaction(tx);
-    },
-  };
+  });
+  const midnightProvider = createLedger9MidnightProvider((tx) =>
+    wallet.submitTransaction(wallet.adoptTransaction(tx.serialize(), 'Finalized')),
+  );
+  return { walletProvider, midnightProvider };
 }
 
 function isSynced(state: FacadeState): boolean {
-  return state.shielded.state.progress.isStrictlyComplete() && state.unshielded.progress.isStrictlyComplete();
+  return state.shielded.progress.isStrictlyComplete() && state.unshielded.progress.isStrictlyComplete();
 }
 
 /**
@@ -226,8 +227,8 @@ function syncSummary(state: FacadeState): string {
     ? 'synced'
     : `applied ${state.unshielded.progress.appliedId}`;
   return (
-    `unshielded=${unshielded}, shielded=${channelProgress(state.shielded.state.progress)}, ` +
-    `dust=${channelProgress(state.dust.state.progress)}, dustBalance=${dustBalance(state)}`
+    `unshielded=${unshielded}, shielded=${channelProgress(state.shielded.progress)}, ` +
+    `dust=${channelProgress(state.dust.progress)}, dustBalance=${dustBalance(state)}`
   );
 }
 
@@ -251,8 +252,8 @@ export function reportSyncProgress(wallet: WalletFacade, intervalMs = 30_000): (
         const dust = dustBalance(state);
         const synced =
           state.unshielded.progress.isStrictlyComplete() &&
-          state.shielded.state.progress.isStrictlyComplete() &&
-          state.dust.state.progress.isStrictlyComplete();
+          state.shielded.progress.isStrictlyComplete() &&
+          state.dust.progress.isStrictlyComplete();
         if (synced && dust > 0n) {
           if (!announced) {
             announced = true;
@@ -280,7 +281,7 @@ export function waitForSyncProgress(wallet: WalletFacade) {
     wallet.state().pipe(
       Rx.throttleTime(5_000),
       Rx.tap(logSyncProgress),
-      Rx.filter((state) => state.shielded.state.progress.isConnected || state.unshielded.progress.isConnected),
+      Rx.filter((state) => state.shielded.progress.isConnected || state.unshielded.progress.isConnected),
     ),
   );
 }
@@ -304,9 +305,13 @@ type SerializedWalletState = {
   readonly appliedId: string;
 };
 
-function walletConfiguration({ indexer, indexerWS, node, proofServer }: Config): DefaultConfiguration {
+// Typed with `satisfies` rather than as `DefaultConfiguration`: annotating it widens away the fields the
+// wallet factories in `initWallet` need to see.
+function walletConfiguration({ networkId, indexer, indexerWS, node, proofServer }: Config) {
   return {
-    networkId: getNetworkId(),
+    networkId,
+    // `forks` is left to the facade's default (ledger 9 from protocol version 2000000). Mainnet and preprod
+    // report 1.x versions on their ledger 8 history and 2.x after the fork, so it splits them correctly.
     costParameters: { feeBlocksMargin: 5 },
     relayURL: new URL(node),
     provingServerUrl: new URL(proofServer),
@@ -317,26 +322,25 @@ function walletConfiguration({ indexer, indexerWS, node, proofServer }: Config):
     // which on a network with real history decays under GC pressure and exhausts the heap before
     // finishing. Larger batches with the inter-batch delay disabled keep memory flat and the rate up.
     batchUpdates: { size: 300_000, timeout: 100, spacing: 0 },
-  };
+  } satisfies DefaultConfiguration;
 }
 
 async function initWallet(config: Config, keys: WalletKeys, serialized?: SerializedWalletState): Promise<WalletFacade> {
+  const { seeds } = keys;
   const wallet = await WalletFacade.init({
     configuration: walletConfiguration(config),
     shielded: (c) =>
       serialized === undefined
-        ? ShieldedWallet(c).startWithSecretKeys(keys.shieldedSecretKeys)
+        ? ShieldedWallet(c).startWithSeed(seeds.shielded)
         : ShieldedWallet(c).restore(serialized.shielded),
     unshielded: (c) =>
       serialized === undefined
         ? UnshieldedWallet(c).startWithPublicKey(PublicKey.fromKeyStore(keys.unshieldedKeystore))
         : UnshieldedWallet(c).restore(serialized.unshielded),
     dust: (c) =>
-      serialized === undefined
-        ? DustWallet(c).startWithSecretKey(keys.dustSecretKey, LedgerParameters.initialParameters().dust)
-        : DustWallet(c).restore(serialized.dust),
+      serialized === undefined ? DustWallet(c).startWithSeed(seeds.dust) : DustWallet(c).restore(serialized.dust),
   });
-  await wallet.start(keys.shieldedSecretKeys, keys.dustSecretKey);
+  await wallet.start(seeds);
   return wallet;
 }
 
@@ -409,21 +413,30 @@ export function randomBytes(length: number): Uint8Array {
   return bytes;
 }
 
-export async function configureProviders(wallet: WalletFacade, keys: WalletSecretKeys, config: Config) {
-  const walletAndMidnightProvider = createWalletAndMidnightProvider(wallet, keys);
-  const zkConfigProvider = new NodeZkConfigProvider<OracleCircuits>(contractConfig.zkConfigPath);
-  return {
+// How long a built transaction stays valid. Midnight.js 5 applies it to every transaction it builds
+// and passes it on to the wallet when balancing.
+const TX_TTL_MS = 60 * 60 * 1000;
+
+export function configureProviders(wallet: WalletFacade, keys: WalletKeys, config: Config): OracleProviders {
+  const { walletProvider, midnightProvider } = createWalletAndMidnightProvider(wallet, keys);
+  // The deployed contract was compiled with Compact 0.31.1 for ledger 8, which emits no integrity manifest.
+  // Midnight.js 5 still runs it, but only if missing manifests are accepted.
+  const zkConfigProvider = new NodeZkConfigProvider<OracleCircuits>(contractConfig.zkConfigPath, {
+    verify: 'require-if-present',
+  });
+  return createMidnightProviders({
     privateStateProvider: levelPrivateStateProvider<typeof OraclePrivateStateId>({
       privateStateStoreName: contractConfig.privateStateStoreName,
       privateStoragePasswordProvider: () => contractConfig.privateStoragePassword,
       accountId: contractConfig.accountId,
     }),
-    publicDataProvider: indexerPublicDataProvider(config.indexer, config.indexerWS),
+    publicDataProvider: indexerPublicDataProvider({ queryURL: config.indexer, subscriptionURL: config.indexerWS }),
     zkConfigProvider,
-    proofProvider: httpClientProofProvider(config.proofServer, zkConfigProvider),
-    walletProvider: walletAndMidnightProvider,
-    midnightProvider: walletAndMidnightProvider,
-  };
+    proofProvider: httpClientProofProvider({ url: config.proofServer, zkConfigProvider }),
+    walletProvider,
+    midnightProvider,
+    config: { networkId: config.networkId, ttlSeconds: TX_TTL_MS / 1000 },
+  });
 }
 
 export function setLogger(_logger: Logger) {
