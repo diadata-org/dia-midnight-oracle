@@ -31,10 +31,13 @@ This project uses NPM workspaces to manage the dependencies. First, you'll need 
 npm install
 ```
 
-Then, compile the code in the `contract` directory:
+Then, compile the code in the `contract` directory. Mainnet and preprod run ledger 9, which needs Compact
+toolchain 0.36.0 (compact-runtime 0.21.0); older toolchains produce ledger 8 contracts that can no longer be
+deployed:
 
 ```sh
-npm run compact && npm run build
+compact update 0.36.0
+npm run compact --workspace contract && npm run build --workspace contract
 ```
 
 To run unit tests for the oracle contract:

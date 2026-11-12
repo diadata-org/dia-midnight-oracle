@@ -61,9 +61,9 @@ BigInt.prototype.toJSON = function (): string {
   return this.toString();
 };
 
-// A contract state keeps the era of the ledger that wrote it: the oracle's state is ledger 8 until its
-// first write after the fork, ledger 9 from then on. Midnight.js reads either era into an era-neutral
-// encoding, which the contract's own runtime (0.16, ledger 8) turns back into a state it can read.
+// A contract state carries the era of the ledger that wrote it. Midnight.js reads it into an era-neutral
+// encoding, which the contract's own runtime turns into a state its generated `ledger()` can read; this
+// keeps the read independent of which copy of the ledger WASM Midnight.js loaded.
 export async function getOracleLedgerState(
   providers: OracleProviders,
   contractAddress: ContractAddress,
@@ -438,11 +438,9 @@ const TX_TTL_MS = 60 * 60 * 1000;
 
 export function configureProviders(wallet: WalletFacade, keys: WalletKeys, config: Config): OracleProviders {
   const { walletProvider, midnightProvider } = createWalletAndMidnightProvider(wallet, keys);
-  // The deployed contract was compiled with Compact 0.31.1 for ledger 8, which emits no integrity manifest.
-  // Midnight.js 5 still runs it, but only if missing manifests are accepted.
-  const zkConfigProvider = new NodeZkConfigProvider<OracleCircuits>(contractConfig.zkConfigPath, {
-    verify: 'require-if-present',
-  });
+  // Default integrity mode ('require'): Compact 0.36 writes an integrity manifest next to the keys, so
+  // every key and ZKIR is checked against it before use.
+  const zkConfigProvider = new NodeZkConfigProvider<OracleCircuits>(contractConfig.zkConfigPath);
   return createMidnightProviders({
     privateStateProvider: levelPrivateStateProvider<typeof OraclePrivateStateId>({
       privateStateStoreName: contractConfig.privateStateStoreName,
