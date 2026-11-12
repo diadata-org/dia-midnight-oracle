@@ -286,6 +286,26 @@ export function waitForSyncProgress(wallet: WalletFacade) {
   );
 }
 
+// Every channel synced, DUST included (fee balancing spends DUST coins, so its state must be current),
+// and a spendable DUST balance. The trailing throttle emission keeps the final, synced state from being
+// dropped when the wallet goes quiet after catching up.
+export function waitForFees(wallet: WalletFacade): Promise<FacadeState> {
+  return Rx.firstValueFrom(
+    wallet.state().pipe(
+      Rx.throttleTime(10_000, undefined, { leading: true, trailing: true }),
+      Rx.tap(logSyncProgress),
+      Rx.filter((state) => isSynced(state) && state.dust.progress.isStrictlyComplete()),
+      Rx.filter((state) => {
+        if (dustBalance(state) > 0n) {
+          return true;
+        }
+        logger.info('Synced, but no DUST yet. Register NIGHT for DUST generation to this wallet.');
+        return false;
+      }),
+    ),
+  );
+}
+
 export function waitForFunds(wallet: WalletFacade) {
   return Rx.firstValueFrom(
     wallet.state().pipe(
@@ -395,15 +415,14 @@ export async function buildWalletAndWaitForFunds(
     wallet = await initWallet(config, keys);
   }
 
-  const state = await Rx.firstValueFrom(wallet.state());
   logger.info(`Your wallet address is: ${keys.unshieldedKeystore.getBech32Address()}`);
-  let balance = state.unshielded.balances[nativeToken().raw];
-  if (balance === undefined || balance === 0n) {
-    logger.info(`Your wallet balance is: 0`);
-    logger.info(`Waiting to receive tokens...`);
-    balance = await waitForFunds(wallet);
-  }
-  logger.info(`Your wallet balance is: ${balance}`);
+  // Fees are paid in DUST, so DUST is what has to be available, not NIGHT in this wallet: the NIGHT
+  // generating its DUST can be held elsewhere (e.g. on Cardano, registered via the cNgD DApp).
+  const ready = await waitForFees(wallet);
+  const night = ready.unshielded.balances[nativeToken().raw] ?? 0n;
+  logger.info(`Wallet synced. DUST available for fees: ${dustBalance(ready)}, NIGHT in this wallet: ${night}`);
+  // Save right away, so a restart resumes from here even if the CLI is not exited via the menu.
+  await saveState(wallet, filename);
   return wallet;
 }
 
