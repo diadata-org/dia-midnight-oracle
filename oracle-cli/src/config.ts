@@ -50,6 +50,47 @@ export class StandaloneE2EConfig implements Config {
   }
 }
 
+// Midnight's own hosted endpoints (indexer/rpc.<network>.midnight.network) were shut down on
+// 9 October 2026; preprod and mainnet are served by Blockfrost, with one project per network.
+// The project ID is read from BLOCKFROST_PROJECT_ID (oracle-cli/.env) and never committed.
+function blockfrostEndpoints(network: 'preprod' | 'mainnet') {
+  const projectId = process.env.BLOCKFROST_PROJECT_ID?.trim();
+  if (!projectId) {
+    throw new Error(`Set BLOCKFROST_PROJECT_ID to a Blockfrost project ID for Midnight ${network}`);
+  }
+  const auth = `?project_id=${encodeURIComponent(projectId)}`;
+  return {
+    indexer: `https://midnight-${network}.blockfrost.io/api/v0${auth}`,
+    indexerWS: `wss://midnight-${network}.blockfrost.io/api/v0/ws${auth}`,
+    node: `wss://rpc.midnight-${network}.blockfrost.io${auth}`,
+  };
+}
+
+export class PreprodBlockfrostConfig implements Config {
+  logDir = path.resolve(currentDir, '..', 'logs', 'preprod', `${new Date().toISOString()}.log`);
+  proofServer = process.env.MIDNIGHT_PROOF_SERVER_URL || 'http://127.0.0.1:6300';
+  indexer: string;
+  indexerWS: string;
+  node: string;
+  constructor() {
+    ({ indexer: this.indexer, indexerWS: this.indexerWS, node: this.node } = blockfrostEndpoints('preprod'));
+    setNetworkId('preprod');
+  }
+}
+
+export class MainnetConfig implements Config {
+  logDir = path.resolve(currentDir, '..', 'logs', 'mainnet', `${new Date().toISOString()}.log`);
+  proofServer = process.env.MIDNIGHT_PROOF_SERVER_URL || 'http://127.0.0.1:6300';
+  indexer: string;
+  indexerWS: string;
+  node: string;
+  constructor() {
+    ({ indexer: this.indexer, indexerWS: this.indexerWS, node: this.node } = blockfrostEndpoints('mainnet'));
+    setNetworkId('mainnet');
+  }
+}
+
+// Retired Midnight-hosted preprod endpoints; kept for reference. Use PreprodBlockfrostConfig.
 export class TestnetRemoteConfig implements Config {
   logDir = path.resolve(currentDir, '..', 'logs', 'testnet-remote', `${new Date().toISOString()}.log`);
   proofServer = 'http://127.0.0.1:6300';
